@@ -1,0 +1,135 @@
+---
+title: "Traffic Reducer system architecture overview"
+sidebarTitle: "Architecture"
+description: "How Traffic Reducer's components — TrafficCamera, YOLOv8, Flask API, and web dashboard — fit together to form an adaptive signal control pipeline."
+---
+
+Traffic Reducer is built from two cooperating Python modules: `video_processor.py`, which owns the `TrafficCamera` class and all computer-vision work, and `app.py`, a Flask application that exposes a REST API and streams annotated video to the browser. Together they form a closed loop — raw camera pixels enter one end and green-light decisions come out the other, updated multiple times per second without blocking the web server.
+
+## High-level data flow
+
+Every processed frame travels through the following stages before the dashboard updates:
+
+```
+Video source (YouTube live / local file)
+        │
+        ▼
+FFmpeg subprocess  ──(raw BGR frames)──▶  OpenCV VideoCapture
+        │
+        ▼
+Background daemon thread  (_process_stream)
+        │
+        ├──▶  ThreadPoolExecutor  ──▶  YOLOv8 inference  (_run_yolo)
+        │              │
+        │              ▼
+        │         Zone vehicle counts + pedestrian count + emergency flag
+        │              │
+        │              ▼
+        │         traffic_state dict  (thread-safe, lock-protected)
+        │
+        ├──▶  _draw_overlay  ──▶  JPEG encode  ──▶  traffic_state['frame']
+        │
+        ▼
+Flask app  (app.py)
+        ├──  GET  /video_feed  ──▶  MJPEG stream  ──▶  <img> in dashboard
+        ├──  GET  /stats       ──▶  JSON counts, phase, priority
+        └──  POST /predict     ──▶  JSON green-light decision
+```
+
+## Component breakdown
+
+### TrafficCamera class (`video_processor.py`)
+
+`TrafficCamera` is the heart of the system. At construction time it loads the YOLOv8 model, defines the four directional zone polygons, and allocates a `ThreadPoolExecutor(max_workers=1)` for asynchronous inference. A single background daemon thread — started by `camera.start()` — runs `_process_stream()` in an infinite loop, handling three operating modes:
+
+| Mode | Source | Notes |
+|---|---|---|
+| `idle` | None | Displays a placeholder frame; no inference |
+| `youtube` | YouTube live URL via `yt-dlp` + FFmpeg subprocess | Targets 25 FPS at 854 × 480 |
+| `local` | Local MP4 file via `cv2.VideoCapture` | Playback speed controlled by `local_speed` multiplier |
+
+The central state object `traffic_state` is a plain dict protected by a `threading.Lock`:
+
+```python
+self.traffic_state = {
+    'norte': 0, 'sur': 0, 'este': 0, 'oeste': 0,
+    'pedestrians': 0,
+    'emergency': False,
+    'phase': 'INIT',
+    'frame': self._placeholder_frame("Selecciona una fuente para comenzar")
+}
+```
+
+All Flask endpoints read from this dict via `camera.get_counts()` and `camera.get_frame()`, which both acquire the lock, copy the data, and release — keeping I/O threads independent of the inference thread.
+
+### Flask app (`app.py`)
+
+The Flask application is thin by design. It instantiates one `TrafficCamera` at module load time and exposes the following REST surface:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/` | Renders `templates/index.html` (Jinja2) |
+| `GET` | `/video_feed` | Streams MJPEG from `generate_frames()` |
+| `GET` | `/stats` | Returns live counts, phase, priority, emergency flag |
+| `POST` | `/predict` | Runs majority-rule decision; optionally reads live counts |
+| `GET` | `/simulate` | Returns random counts 0–80 for UI testing |
+| `POST` | `/set_source` | Switches camera mode (`youtube` / `local`) |
+| `POST` | `/set_speed` | Adjusts local video playback speed multiplier |
+| `GET` | `/source_status` | Reports active mode and local-file availability |
+
+The `generate_frames()` generator yields MJPEG boundary-delimited JPEG bytes directly from `traffic_state['frame']`, keeping the stream latency under one frame.
+
+### Web dashboard (`templates/index.html` + `static/script.js`)
+
+The browser dashboard never holds server-side state. It polls two endpoints on fixed timers:
+
+- **`/stats` every 1 500 ms** — updates the per-direction vehicle counts, pedestrian count, emergency indicator, and intersection graphic.
+- **`/predict` every 2 000 ms** (live mode only) — fetches the current green-light decision and animates the signal display. In manual mode, the frontend calls `/predict` immediately whenever a slider value changes.
+
+## Threading model
+
+Traffic Reducer runs three concurrent execution contexts at all times:
+
+```
+Main thread  ──────────────────────  Flask (Werkzeug WSGI server)
+                                       handles all HTTP requests
+
+Daemon thread  ────────────────────  _process_stream()
+                                       reads frames, submits YOLO jobs,
+                                       draws overlays, encodes JPEGs
+
+ThreadPoolExecutor (max_workers=1)    _run_yolo()
+                                       YOLOv8 forward pass on each new frame
+```
+
+The executor's single worker means inference never queues: if the previous YOLO job has not finished when the next frame arrives, `_process_stream` draws the overlay using `last_yolo_data` (the most recently completed result) and skips submitting a new job until the executor is free. This prevents unbounded queue growth under high frame rates.
+
+## Frame caching
+
+For local video playback, `_process_stream` keeps a `yolo_cache` dict keyed by `cv2.CAP_PROP_POS_FRAMES` (the integer frame index returned by OpenCV):
+
+```python
+if mode == 'local' and cur_idx in self.yolo_cache:
+    self.last_yolo_data = self.yolo_cache[cur_idx]
+else:
+    # submit a new YOLO job and store result under cur_idx
+```
+
+This means a frame that has already been analysed — for example when playback loops back to the start of the file — is served from the cache with zero inference overhead. The cache is cleared automatically whenever the source mode is switched via `set_mode()`.
+
+## Explore the concepts
+
+<CardGroup cols={2}>
+  <Card title="Vehicle Detection" icon="camera" href="/concepts/vehicle-detection">
+    How YOLOv8 detects vehicles, assigns them to directional zones, and draws the annotated overlay.
+  </Card>
+  <Card title="Signal Decision" icon="traffic-cone" href="/concepts/signal-decision">
+    The majority-rule algorithm that picks which lane gets the green light each cycle.
+  </Card>
+  <Card title="Priority System" icon="siren" href="/concepts/priority-system">
+    Pedestrian and emergency-vehicle overrides that supersede normal signal decisions.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/concepts/architecture">
+    You are here — the full system architecture and threading model.
+  </Card>
+</CardGroup>

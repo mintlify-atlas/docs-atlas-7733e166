@@ -1,0 +1,283 @@
+---
+title: "REST API endpoints reference for Traffic Reducer"
+sidebarTitle: "API Endpoints"
+description: "Complete reference for all eight Flask REST endpoints: vehicle counts, signal prediction, video source control, and simulation data."
+---
+
+Traffic Reducer exposes eight HTTP endpoints on `http://127.0.0.1:5000`. All endpoints accept and return JSON (except `/video_feed`, which streams MJPEG frames). Start the server with `python traffic_app/app.py` before making any requests.
+
+---
+
+## GET /
+
+Serves the main web dashboard as an HTML page. Open this URL in a browser to access the full Traffic Reducer interface with live camera feed, signal phase display, and control buttons.
+
+**No parameters.**
+
+**Returns:** HTML page (`text/html`).
+
+```bash
+curl http://127.0.0.1:5000/
+```
+
+---
+
+## GET /video\_feed
+
+Streams the annotated camera feed as a continuous MJPEG response. Each frame is JPEG-encoded and includes zone polygon overlays (Norte, Sur, Este, Oeste), bounding boxes for detected vehicles and pedestrians, and red highlights for emergency vehicles.
+
+**Content-Type:** `multipart/x-mixed-replace; boundary=frame`
+
+Embed the stream directly in an HTML page:
+
+```html
+<img src="http://127.0.0.1:5000/video_feed" />
+```
+
+The stream stays open until the client disconnects. If no video source is active, the feed returns a dark placeholder frame.
+
+---
+
+## GET /stats
+
+Returns the current traffic state captured from the live camera or local video. All counts reflect the most recent completed YOLOv8 inference pass.
+
+**No request body.**
+
+<ResponseField name="norte" type="integer">
+  Vehicle count detected in the North zone.
+</ResponseField>
+
+<ResponseField name="sur" type="integer">
+  Vehicle count detected in the South zone.
+</ResponseField>
+
+<ResponseField name="este" type="integer">
+  Vehicle count detected in the East zone.
+</ResponseField>
+
+<ResponseField name="oeste" type="integer">
+  Vehicle count detected in the West zone.
+</ResponseField>
+
+<ResponseField name="pedestrians" type="integer">
+  Total number of pedestrian detections across all zones.
+</ResponseField>
+
+<ResponseField name="emergency" type="boolean">
+  `true` if an emergency vehicle (bus class 5 or truck class 7 with red/yellow/blue color signature) is currently detected in the frame.
+</ResponseField>
+
+<ResponseField name="phase" type="string">
+  Current active signal phase label. Possible values: `"NORTE"`, `"SUR"`, `"ESTE"`, `"OESTE"`, `"INIT"`.
+</ResponseField>
+
+<ResponseField name="priority" type="string">
+  The direction with the highest vehicle count (e.g., `"ESTE"`). Returns `"--"` when all counts are zero.
+</ResponseField>
+
+<ResponseField name="priority_idx" type="integer">
+  Index of the priority direction: `0` = Norte, `1` = Sur, `2` = Este, `3` = Oeste. Returns `-1` when all counts are zero.
+</ResponseField>
+
+<ResponseField name="mode" type="string">
+  Current video source mode. One of `"idle"`, `"youtube"`, or `"local"`.
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "norte": 12,
+  "sur": 8,
+  "este": 24,
+  "oeste": 5,
+  "pedestrians": 2,
+  "emergency": false,
+  "phase": "ESTE",
+  "priority": "ESTE",
+  "priority_idx": 2,
+  "mode": "youtube"
+}
+```
+
+```bash
+curl http://127.0.0.1:5000/stats
+```
+
+---
+
+## POST /predict
+
+Runs the signal phase prediction algorithm and returns the recommended winning phase. In manual mode, the counts you supply in the request body are used directly. In live mode, the counts are read from the camera's latest YOLOv8 inference result, and the winning phase is automatically applied to the camera display via `set_phase()`.
+
+<Note>
+  If the sklearn model (`modelo_semaforo_ia.pkl`) failed to load at startup, this endpoint returns `500` with `{"error": "Modelo no disponible"}`. Verify `MODEL_PATH` in `app.py` points to the correct file.
+</Note>
+
+**Request body (JSON):**
+
+<ParamField body="live_mode" type="boolean" default="false">
+  When `true`, reads vehicle counts from the live camera instead of the request body. All direction fields are ignored.
+</ParamField>
+
+<ParamField body="norte" type="number" default="0">
+  Vehicle count for the North direction. Used only when `live_mode` is `false`.
+</ParamField>
+
+<ParamField body="sur" type="number" default="0">
+  Vehicle count for the South direction. Used only when `live_mode` is `false`.
+</ParamField>
+
+<ParamField body="este" type="number" default="0">
+  Vehicle count for the East direction. Used only when `live_mode` is `false`.
+</ParamField>
+
+<ParamField body="oeste" type="number" default="0">
+  Vehicle count for the West direction. Used only when `live_mode` is `false`.
+</ParamField>
+
+<ResponseField name="prediction" type="integer">
+  Winning phase index: `0` = Norte, `1` = Sur, `2` = Este, `3` = Oeste. When all counts are zero, returns `0`.
+</ResponseField>
+
+<ResponseField name="traffic_data" type="object">
+  The Norte, Sur, Este, and Oeste counts (as floats) that were actually used in the prediction.
+</ResponseField>
+
+**Example — manual mode:**
+
+```bash
+curl -X POST http://127.0.0.1:5000/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"norte": 10, "sur": 55, "este": 10, "oeste": 10}'
+```
+
+```json
+{
+  "prediction": 1,
+  "traffic_data": {
+    "norte": 10.0,
+    "sur": 55.0,
+    "este": 10.0,
+    "oeste": 10.0
+  }
+}
+```
+
+**Example — live mode:**
+
+```bash
+curl -X POST http://127.0.0.1:5000/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"live_mode": true}'
+```
+
+---
+
+## POST /set\_source
+
+Switches the active video source. Closing the current source (YouTube ffmpeg pipe or local `cv2.VideoCapture`) happens immediately; the new source opens on the next loop iteration of the background thread.
+
+**Request body (JSON):**
+
+<ParamField body="mode" type="string" required>
+  Target source mode. Must be `"youtube"` or `"local"`. The value `"idle"` cannot be set through this endpoint.
+</ParamField>
+
+**Returns:** `{"mode": "<applied_mode>"}`
+
+**Errors:**
+
+- `400` if `mode` is not `"youtube"` or `"local"`.
+- `400` if `mode` is `"local"` and `traffic_app/static/traffic_dron_view.mp4` does not exist on disk.
+
+```bash
+curl -X POST http://127.0.0.1:5000/set_source \
+  -H 'Content-Type: application/json' \
+  -d '{"mode": "local"}'
+```
+
+```json
+{"mode": "local"}
+```
+
+---
+
+## POST /set\_speed
+
+Sets the playback speed multiplier for local video. The value is clamped to a minimum of `0.05` to prevent a zero or negative interval. Has no effect on the YouTube stream.
+
+**Request body (JSON):**
+
+<ParamField body="speed" type="number" required>
+  Speed multiplier. `1.0` = normal speed, `2.0` = double speed, `0.5` = half speed. Clamped to `≥ 0.05`.
+</ParamField>
+
+**Returns:** `{"speed": <applied_value>}` — the clamped value that was actually applied.
+
+```bash
+curl -X POST http://127.0.0.1:5000/set_speed \
+  -H 'Content-Type: application/json' \
+  -d '{"speed": 1.5}'
+```
+
+```json
+{"speed": 1.5}
+```
+
+---
+
+## GET /source\_status
+
+Returns the current video source mode and whether the local video file exists on disk. The dashboard calls this endpoint on load to decide whether to enable the VIDEO LOCAL button.
+
+**No request body.**
+
+<ResponseField name="mode" type="string">
+  Current source mode: `"idle"`, `"youtube"`, or `"local"`.
+</ResponseField>
+
+<ResponseField name="has_local" type="boolean">
+  `true` if `traffic_app/static/traffic_dron_view.mp4` exists on the server's filesystem.
+</ResponseField>
+
+```bash
+curl http://127.0.0.1:5000/source_status
+```
+
+```json
+{"mode": "idle", "has_local": true}
+```
+
+---
+
+## GET /simulate
+
+Returns random vehicle counts between `0` and `80` for each direction. Useful for testing the dashboard and the `/predict` endpoint without a live camera feed or local video file.
+
+**No request body.**
+
+<ResponseField name="norte" type="integer">
+  Random vehicle count for North (0–80).
+</ResponseField>
+
+<ResponseField name="sur" type="integer">
+  Random vehicle count for South (0–80).
+</ResponseField>
+
+<ResponseField name="este" type="integer">
+  Random vehicle count for East (0–80).
+</ResponseField>
+
+<ResponseField name="oeste" type="integer">
+  Random vehicle count for West (0–80).
+</ResponseField>
+
+```bash
+curl http://127.0.0.1:5000/simulate
+```
+
+```json
+{"norte": 34, "sur": 71, "este": 12, "oeste": 55}
+```

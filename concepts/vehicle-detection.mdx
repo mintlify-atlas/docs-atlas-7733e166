@@ -1,0 +1,119 @@
+---
+title: "YOLOv8 vehicle detection and zone assignment"
+sidebarTitle: "Vehicle Detection"
+description: "How Traffic Reducer runs YOLOv8 inference on each video frame, assigns detected objects to directional zones, and counts vehicles per lane."
+---
+
+On every unprocessed frame that arrives from the video source, Traffic Reducer runs a YOLOv8 forward pass filtered to five COCO class IDs. Each detected bounding box is then tested against four compass-direction polygon zones; the zone whose polygon contains the box's centroid claims the detection and increments its vehicle counter. The resulting per-zone counts are what the signal-decision algorithm reads to choose the green light.
+
+## YOLOv8 inference configuration
+
+Inference is executed inside `_run_yolo()`, submitted asynchronously to the `ThreadPoolExecutor`:
+
+```python
+results = self.model(
+    frame,
+    verbose=False,
+    classes=[0, 2, 3, 5, 7],  # person, car, motorcycle, bus, truck
+    conf=0.25,
+    iou=0.5,
+    imgsz=640,
+    max_det=300,
+    agnostic_nms=True,
+)
+```
+
+Setting `agnostic_nms=True` applies non-maximum suppression across all classes rather than per-class, reducing double-counted detections at intersections where vehicle types often overlap.
+
+## COCO class mapping
+
+| Class ID | Label | Treatment |
+|---|---|---|
+| 0 | person | Counted as pedestrian; **not** assigned to a vehicle zone |
+| 2 | car | Centroid tested against zone polygons |
+| 3 | motorcycle | Centroid tested against zone polygons |
+| 5 | bus | Centroid tested against zone polygons; also checked for emergency lights |
+| 7 | truck | Centroid tested against zone polygons; also checked for emergency lights |
+
+Persons are tracked separately in `pedestrian_count` and stored in `traffic_state['pedestrians']`. They do not contribute to any directional vehicle total.
+
+## Zone polygon definitions
+
+The intersection is divided into four named zones using normalized coordinates in the range 0–1 (relative to frame width and height). At inference time the polygons are scaled to pixel coordinates by multiplying by `[w, h]`:
+
+```python
+self.zones = {
+    'norte': np.array([[0.00, 0.00], [0.43, 0.05], [0.43, 0.58], [0.27, 0.65]]),
+    'este':  np.array([[0.47, 0.07], [1.00, 0.17], [1.00, 0.40], [0.57, 0.55]]),
+    'sur':   np.array([[0.53, 0.55], [0.96, 0.42], [0.99, 0.94], [0.63, 1.00]]),
+    'oeste': np.array([[0.00, 0.73], [0.55, 0.70], [0.43, 1.00], [0.00, 1.00]]),
+}
+```
+
+Using normalized coordinates means the same zone definitions work correctly regardless of whether the frame comes from the 854 × 480 YouTube pipeline or a local video file with different native resolution.
+
+## Zone assignment algorithm
+
+For each non-pedestrian detection, `_run_yolo()` computes the bounding-box centroid and iterates over the four zones in definition order:
+
+```python
+matched_zone = None
+for zone_name, poly in self.zones.items():
+    if cv2.pointPolygonTest(
+        (poly * [w, h]).astype(np.int32), (cx, cy), False
+    ) >= 0:
+        counts[zone_name] += 1
+        matched_zone = zone_name
+        break
+
+boxes.append((matched_zone or 'other', float(x1), float(y1), float(x2), float(y2)))
+```
+
+`cv2.pointPolygonTest` returns a value ≥ 0 when the point lies on or inside the polygon. The loop breaks on the first match, so each vehicle is counted exactly once. Detections whose centroid falls outside every zone are labelled `'other'` and excluded from all counts.
+
+<Note>
+  The `'other'` category typically includes vehicles in the centre of the intersection — where turning or crossing traffic briefly occupies no single approach — and detections near the frame boundary where no zone polygon reaches.
+</Note>
+
+## Overlay drawing
+
+After `_run_yolo()` returns, `_draw_overlay()` paints zone outlines and color-coded bounding boxes directly onto the display frame before JPEG encoding. Zone polygon borders are drawn first; bounding boxes are layered on top.
+
+### Zone colors
+
+| Zone | Direction | BGR Color | Appearance |
+|---|---|---|---|
+| `norte` | North | `(255, 180, 60)` | Amber |
+| `sur` | South | `(60, 200, 255)` | Cyan |
+| `este` | East | `(90, 230, 130)` | Green |
+| `oeste` | West | `(200, 120, 255)` | Purple |
+
+Bounding box color follows the zone the detection was assigned to, making it immediately visible which approach each vehicle belongs to. Special cases override the zone color:
+
+- **Pedestrians** (`'ped'`): bright blue-white `(255, 200, 0)`, 2 px border
+- **Emergency vehicles** (`'emergency'`): vivid red `(0, 50, 255)`, 3 px border
+- **Unmatched vehicles** (`'other'`): mid-grey `(130, 130, 130)`, 1 px border
+
+### Scale correction
+
+Because YOLO always runs on a copy of the frame at the native capture resolution while the display frame may have been resized, `_draw_overlay()` applies per-axis scale factors before drawing:
+
+```python
+ow, oh = data['frame_size']   # resolution used during inference
+sx, sy = w / ow, h / oh       # current display frame dimensions
+
+x1, y1, x2, y2 = int(x1 * sx), int(y1 * sy), int(x2 * sx), int(y2 * sy)
+```
+
+This keeps bounding boxes aligned even when the display pipeline and inference pipeline operate at different resolutions.
+
+## JPEG encoding quality
+
+The final annotated frame is encoded with `cv2.imencode` at a quality setting that balances dashboard latency against visual fidelity:
+
+| Source mode | JPEG quality |
+|---|---|
+| `local` | 82 |
+| `youtube` | 78 |
+
+The lower quality for live YouTube streams reduces per-frame byte size, which matters more when frames cannot be cached and must be transmitted in near real time.

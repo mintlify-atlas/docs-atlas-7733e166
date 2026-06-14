@@ -1,0 +1,78 @@
+---
+title: "Traffic Reducer: AI adaptive traffic signal control"
+sidebarTitle: "Introduction"
+description: "Traffic Reducer replaces static timers with YOLOv8 computer vision that counts vehicles per lane and selects the optimal green-light direction in real time."
+---
+
+Traffic Reducer is an AI-powered adaptive traffic signal control system designed to replace the fixed-timer signals found in most urban intersections. By analysing live video with a YOLOv8 detection pipeline, the system counts vehicles per lane every frame, identifies pedestrians and emergency vehicles, and instantly selects which direction should receive the green light — all without human intervention and without predetermined schedules.
+
+## The problem with static signals
+
+Conventional traffic lights operate on fixed time cycles that are configured once and never updated to reflect actual traffic conditions. This mismatch between the rigid schedule and real-world demand creates a cascade of problems:
+
+- **Congestion at critical intersections** — lanes with heavy demand wait while empty lanes receive green time
+- **Wasted fuel and higher emissions** — vehicles idle longer than necessary, burning fuel and releasing pollutants
+- **Driver and pedestrian stress** — unpredictable wait times erode public trust in the infrastructure
+- **Emergency vehicle delays** — ambulances, fire trucks, and police units are slowed by the same static phases that govern ordinary traffic
+
+## How Traffic Reducer solves it
+
+The system connects to a traffic camera feed — either a YouTube live stream or a local video file — and continuously runs the following pipeline:
+
+1. **Frame capture** — OpenCV reads frames from the stream; `yt-dlp` and `imageio-ffmpeg` extract a direct HLS URL from YouTube live links so FFmpeg can pipe raw video to OpenCV without an intermediate file.
+2. **YOLOv8 detection** — every captured frame is passed to the Ultralytics YOLO model, which detects vehicles (classes: car, bus, truck, motorcycle), pedestrians, and potential emergency vehicles simultaneously.
+3. **Zone assignment** — each detected bounding box centroid is tested against four polygonal zones (Norte, Sur, Este, Oeste) defined in normalised coordinates. A vehicle is counted toward the zone whose polygon contains its centroid.
+4. **Priority evaluation** — before applying the vehicle-count majority rule, the system checks for pedestrians in crosswalk zones and scans bus/truck bounding boxes for red, yellow, or blue HSV signatures that indicate emergency lighting.
+5. **Green-light decision** — the lane with the highest vehicle count wins the green phase (`np.argmax` over the four zone counts). Pedestrian and emergency detections override this rule and trigger immediate priority phases.
+
+The decided phase is broadcast to the Flask web dashboard in real time via the `/stats` and `/predict` REST endpoints.
+
+## Key capabilities
+
+- **Dual video sources** — switch at runtime between a YouTube live stream and a local MP4 file (`traffic_dron_view.mp4`) through the dashboard's source modal, with no server restart required
+- **Pedestrian safety priority** — YOLOv8 class `0` detections in crosswalk areas automatically interrupt the vehicle-count logic and protect pedestrians
+- **Emergency vehicle priority** — HSV colour analysis on class `5` (bus) and class `7` (truck) bounding boxes identifies emergency lighting and grants an immediate override phase
+- **Flask dashboard** — a single-page web UI at `http://127.0.0.1:5000` shows the annotated live video feed, per-zone vehicle counts, active phase, and signal state
+- **REST API** — endpoints `/stats`, `/predict`, `/set_source`, `/set_speed`, `/simulate`, and `/video_feed` expose all system state and controls to external clients
+- **Pre-trained sklearn model** — a `scikit-learn` model (`modelo_semaforo_ia.pkl`) is included for signal-phase classification; the app loads it at startup and falls back gracefully if the file is not found
+
+## Architecture overview
+
+The system is built from two cooperating components:
+
+| Component | File | Role |
+|---|---|---|
+| `TrafficCamera` | `traffic_app/video_processor.py` | Background thread that captures frames, runs YOLOv8 inference on a `ThreadPoolExecutor`, maintains zone counts, and exposes the latest annotated JPEG |
+| Flask application | `traffic_app/app.py` | Web server that instantiates `TrafficCamera`, serves the dashboard HTML, streams video via multipart HTTP, and exposes the REST API |
+
+`TrafficCamera` starts a daemon thread on `camera.start()` that continuously reads frames, submits YOLO jobs to a single-worker executor, collects results asynchronously with `pending_yolo.result()`, and stores the annotated frame and zone counts behind a `threading.Lock`. The Flask routes read from this shared state without blocking the capture loop.
+
+## Dependencies
+
+| Package | Purpose |
+|---|---|
+| `flask` | Web server, template rendering, and REST API routing |
+| `opencv-python` | Frame capture from local video and YouTube pipe, image annotation, and JPEG encoding |
+| `ultralytics` | YOLOv8 model loading and inference (also pulls in `imageio-ffmpeg`) |
+| `yt-dlp` | Extracts a direct HLS stream URL from a YouTube live link |
+| `pandas` | Data handling utilities |
+| `numpy` | Numerical operations — zone polygon tests, argmax phase selection, HSV colour ratios |
+| `joblib` | Alternative loader for the pre-trained sklearn `.pkl` model |
+| `scikit-learn` | Compatibility layer for the signal-phase classification model |
+
+## Explore further
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run the server and see AI-driven signal decisions in your browser in under five minutes.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Deep-dive into the TrafficCamera pipeline, zone geometry, and threading model.
+  </Card>
+  <Card title="Dashboard" icon="gauge" href="/dashboard/overview">
+    Learn every panel and control in the Traffic Reducer web UI.
+  </Card>
+  <Card title="API Reference" icon="code" href="/reference/api-endpoints">
+    Full reference for every REST endpoint, request schema, and response shape.
+  </Card>
+</CardGroup>

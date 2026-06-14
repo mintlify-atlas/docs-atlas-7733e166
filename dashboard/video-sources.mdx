@@ -1,0 +1,139 @@
+---
+title: "Switching video sources in Traffic Reducer"
+sidebarTitle: "Video Sources"
+description: "How to switch between the YouTube live traffic stream and a local drone-view MP4 file, and how Traffic Reducer handles source failures and reconnection."
+---
+
+Traffic Reducer supports two video source modes — YouTube live and local MP4 — switchable at runtime without restarting the Flask server. The active source is shared across all browser sessions; changing it from one tab or via the API immediately affects every connected client.
+
+## YouTube mode
+
+When `mode` is set to `'youtube'`, the server uses `yt-dlp` to resolve the direct stream URL from the configured channel:
+
+```
+https://www.youtube.com/live/1H0iTzv2jiQ
+```
+
+`yt-dlp` attempts extraction with multiple player clients in the following order:
+
+```python
+['android', 'tv_simply', 'web', 'mweb', 'tv', 'android_vr']
+```
+
+Once a valid stream URL is resolved, raw BGR24 video frames are piped through FFmpeg at **25 FPS** at a resolution of **854 × 480**. Frames are decoded by the server and passed to the YOLOv8 detection pipeline before being JPEG-encoded and pushed to the `/video_feed` MJPEG stream.
+
+**Failure and reconnection behaviour:**
+
+- If the stream drops or `yt-dlp` fails to resolve the URL, the server enters a **60-second cooldown** before retrying automatically.
+- After **3 consecutive failures**, the dashboard surface-level badge switches to `● INACTIVO` and the UI suggests switching to local video.
+- TLS handshake errors and socket reset messages that appear in the terminal during this period are handled by the reconnection logic and are safe to ignore.
+
+<Warning>
+YouTube live stream availability depends on the source channel being online. If the channel goes offline, Traffic Reducer retries automatically but will display a placeholder frame until the stream reconnects. Switch to local video for uninterrupted offline operation.
+</Warning>
+
+## Local video mode
+
+When `mode` is set to `'local'`, the server reads frames directly from:
+
+```
+traffic_app/static/traffic_dron_view.mp4
+```
+
+The file is a drone-view recording of a traffic intersection. Key behaviours:
+
+- The video **loops automatically** when the file ends — no manual restart is needed.
+- Playback runs at **0.5× speed** by default (half real-time). This default is set by `LOCAL_VIDEO_SPEED` in `app.py`:
+
+  ```python
+  LOCAL_VIDEO_SPEED = 0.5
+  ```
+
+- The playback speed can be changed at runtime via `POST /set_speed` without switching modes.
+
+The "VIDEO LOCAL" button in the UI and the `modal-pick-local` option in the source selection modal are both automatically **disabled** if `traffic_dron_view.mp4` is not found on disk at startup. The server reports availability through `GET /source_status` using the `has_local` field.
+
+## Switching sources via the UI
+
+<Steps>
+  <Step title="Open the source switcher">
+    In the camera feed card header, locate the **EN VIVO** and **VIDEO LOCAL** buttons on the right side of the card.
+  </Step>
+  <Step title="Click your target source">
+    Click **EN VIVO** to switch to YouTube live, or **VIDEO LOCAL** to switch to the local MP4. The badge in the top-left of the card updates immediately to `● EN VIVO` or `● VIDEO LOCAL`.
+  </Step>
+  <Step title="Confirm the feed updates">
+    The MJPEG stream at `/video_feed` restarts with the new source. There is no page reload — the `<img>` element continues receiving frames from the same URL.
+  </Step>
+</Steps>
+
+## Switching sources via the API
+
+You can also switch sources programmatically using `POST /set_source`:
+
+```bash
+# Switch to YouTube live
+curl -X POST http://127.0.0.1:5000/set_source \
+  -H 'Content-Type: application/json' \
+  -d '{"mode": "youtube"}'
+```
+
+```bash
+# Switch to local video
+curl -X POST http://127.0.0.1:5000/set_source \
+  -H 'Content-Type: application/json' \
+  -d '{"mode": "local"}'
+```
+
+A successful response echoes back the active mode:
+
+```json
+{ "mode": "youtube" }
+```
+
+If the requested mode is invalid or the local file is missing, the server returns HTTP 400:
+
+```json
+{ "error": "Video local no encontrado en disco" }
+```
+
+## Adjusting local video playback speed
+
+Use `POST /set_speed` to change the local video playback multiplier at runtime:
+
+```bash
+# Set to real-time speed
+curl -X POST http://127.0.0.1:5000/set_speed \
+  -H 'Content-Type: application/json' \
+  -d '{"speed": 1.0}'
+
+# Set to 2× accelerated for faster testing
+curl -X POST http://127.0.0.1:5000/set_speed \
+  -H 'Content-Type: application/json' \
+  -d '{"speed": 2.0}'
+```
+
+The response confirms the applied speed value:
+
+```json
+{ "speed": 1.0 }
+```
+
+## Checking current source status
+
+```bash
+curl http://127.0.0.1:5000/source_status
+```
+
+```json
+{
+  "mode": "youtube",
+  "has_local": true
+}
+```
+
+`mode` is one of `"youtube"`, `"local"`, or `"idle"`. `has_local` is `true` only if `traffic_dron_view.mp4` exists on disk at the path checked during server startup.
+
+<Note>
+The server always starts in `idle` mode regardless of previous session state. The source selection modal is shown automatically on page load when `mode` is `"idle"`. The selected mode persists in memory until changed via the UI or API, or until the server restarts.
+</Note>

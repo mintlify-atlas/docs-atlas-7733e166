@@ -1,0 +1,103 @@
+---
+title: "Deploy Traffic Reducer for production use"
+sidebarTitle: "Production"
+description: "Guidance for running Traffic Reducer reliably in production: disabling Flask debug mode, GPU acceleration, persistent service setup, and network access configuration."
+---
+
+The default `app.run(debug=True)` configuration in `app.py` is intended for local development only. It enables the interactive debugger, exposes the Werkzeug reloader (disabled here via `use_reloader=False`), and binds only to `127.0.0.1`, making the server unreachable from other machines. This page covers the changes needed to run Traffic Reducer reliably and securely in a production environment.
+
+## Disable debug mode
+
+Edit the final block in `app.py` to turn off debug mode and bind to all network interfaces:
+
+```python
+# In app.py — change:
+app.run(debug=True, port=5000, use_reloader=False)
+
+# To:
+app.run(debug=False, port=5000, use_reloader=False, host='0.0.0.0')
+```
+
+Setting `host='0.0.0.0'` makes the server listen on all available interfaces so that other machines on the network can reach the dashboard and MJPEG stream.
+
+## Run with a production WSGI server
+
+Flask's built-in server is single-threaded and not hardened for production traffic. Replace it with a production-grade WSGI server:
+
+```bash
+# Windows — Waitress
+pip install waitress
+waitress-serve --port=5000 traffic_app.app:app
+
+# Linux / macOS — Gunicorn
+pip install gunicorn
+gunicorn -w 1 -b 0.0.0.0:5000 traffic_app.app:app
+```
+
+<Warning>
+  Always use exactly **one worker process** (`-w 1` for Gunicorn). `TrafficCamera` maintains a global capture thread, an in-process YOLO executor, and a shared `traffic_state` dictionary. These cannot be safely shared or duplicated across multiple worker processes. Launching more than one worker will result in multiple competing capture threads and inconsistent state.
+</Warning>
+
+## GPU acceleration
+
+If the production machine has a CUDA-capable GPU, install the GPU-enabled build of PyTorch before installing Ultralytics. This allows YOLOv8 to run inference on the GPU, significantly reducing per-frame latency:
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install ultralytics
+```
+
+Replace `cu121` with the CUDA version matching your driver (e.g., `cu118` for CUDA 11.8). Ultralytics will automatically use the GPU when PyTorch detects a CUDA device.
+
+## Fix MODEL_PATH
+
+Before deploying, update the hardcoded `MODEL_PATH` in `app.py` to an absolute path valid on the production machine:
+
+```python
+MODEL_PATH = "/opt/traffic_reducer/traffic_reducer_dataset/modelo_entrenado/modelo_semaforo_ia.pkl"
+```
+
+Ensure the file exists at that path and is readable by the process user. If the model cannot be loaded, the `/predict` endpoint will return a 500 error for any request that does not use `live_mode`.
+
+## Run as a systemd service (Linux)
+
+To have Traffic Reducer start automatically on boot and restart on failure, create a systemd unit file:
+
+```ini
+[Unit]
+Description=Traffic Reducer
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/traffic_reducer
+ExecStart=/opt/traffic_reducer/venv/bin/python traffic_app/app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Save the file to `/etc/systemd/system/traffic-reducer.service`, then enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable traffic-reducer
+sudo systemctl start traffic-reducer
+```
+
+Check the service status and logs with:
+
+```bash
+sudo systemctl status traffic-reducer
+sudo journalctl -u traffic-reducer -f
+```
+
+## Network access
+
+By default, without the `host='0.0.0.0'` change described above, the server binds only to `127.0.0.1:5000` and is not reachable from other machines. After setting `host='0.0.0.0'`, any machine on the same network can access the dashboard at `http://<server-ip>:5000`.
+
+<Note>
+  The MJPEG stream served at `/video_feed` sends a continuous sequence of JPEG frames encoded at quality 78–82. This is bandwidth-intensive, particularly on slow or wireless networks. If multiple clients need to view the stream simultaneously, consider proxying through nginx with buffering enabled to absorb burst traffic and reduce the load on the Flask/WSGI process.
+</Note>

@@ -1,0 +1,82 @@
+---
+title: "Environment variables and runtime configuration"
+sidebarTitle: "Environment"
+description: "All configurable constants in Traffic Reducer's app.py and video_processor.py, including model paths, video sources, FFmpeg options, and frame settings."
+---
+
+Traffic Reducer does not use a `.env` file or a separate configuration layer. All runtime settings are expressed as module-level constants at the top of `app.py` and `video_processor.py`. To change a setting, edit the constant directly in the relevant source file and restart the server.
+
+## `app.py` constants
+
+These constants control the sklearn prediction model, video sources, YOLO weights selection, and startup behavior.
+
+| Constant | Default | Description |
+|---|---|---|
+| `MODEL_PATH` | Hardcoded developer Windows path | Absolute path to `modelo_semaforo_ia.pkl` — the sklearn signal-phase model |
+| `LOCAL_VIDEO_PATH` | `traffic_app/static/traffic_dron_view.mp4` | Path to the local fallback video file |
+| `YOUTUBE_URL` | `https://www.youtube.com/live/1H0iTzv2jiQ` | YouTube live stream URL used in `youtube` mode |
+| `YOLO_MODEL_PATH` | Auto-selected from project root | Path to the YOLOv8 `.pt` weights file; resolved at startup |
+| `DEFAULT_MODE` | `'idle'` | Startup mode: `'idle'`, `'youtube'`, or `'local'` |
+| `LOCAL_VIDEO_SPEED` | `0.5` | Playback speed multiplier for local video mode |
+
+## `video_processor.py` constants
+
+These constants define the output dimensions and frame rate used when decoding the YouTube live stream through FFmpeg.
+
+| Constant | Value | Description |
+|---|---|---|
+| `YT_WIDTH` | `854` | Output width of decoded YouTube frames (pixels) |
+| `YT_HEIGHT` | `480` | Output height of decoded YouTube frames (pixels) |
+| `YT_TARGET_FPS` | `25` | FFmpeg target frame rate for YouTube mode |
+| `YT_FRAME_BYTES` | `854 × 480 × 3` | Expected raw frame size in bytes (BGR24) |
+
+## OpenCV FFmpeg environment variables
+
+`video_processor.py` sets several `os.environ` entries at module import time to configure OpenCV's internal FFmpeg capture layer for low-latency, resilient live-stream ingestion:
+
+```python
+os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
+    'loglevel;quiet|rtsp_transport;tcp|http_persistent;0|'
+    'reconnect;1|reconnect_streamed;1|reconnect_delay_max;5|'
+    'fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0|'
+    'timeout;60000000|rw_timeout;60000000|'
+    'user_agent;Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+)
+os.environ['OPENCV_FFMPEG_OPEN_TIMEOUT'] = '60000'
+os.environ['OPENCV_FFMPEG_READ_TIMEOUT'] = '60000'
+os.environ['OPENCV_LOG_LEVEL'] = 'OFF'
+```
+
+These values are applied globally as soon as the module is imported and affect all OpenCV video captures opened during the session. The timeout values are expressed in milliseconds (`60000` = 60 seconds).
+
+## Common configuration changes
+
+**Start in YouTube mode automatically**
+
+Change `DEFAULT_MODE` in `app.py` so the system connects to the live stream as soon as the server starts, without requiring a manual source selection in the UI:
+
+```python
+# In app.py
+DEFAULT_MODE = 'youtube'  # was 'idle'
+```
+
+**Point to a custom YouTube stream**
+
+Replace the bundled stream URL with your own live stream:
+
+```python
+YOUTUBE_URL = "https://www.youtube.com/live/YOUR_STREAM_ID"
+```
+
+**Adjust local video playback speed**
+
+The default `0.5` plays the local video at half speed to give YOLO sufficient time for inference. Increase the value to play back faster, or decrease it to slow down further:
+
+```python
+LOCAL_VIDEO_SPEED = 1.0  # real-time playback
+```
+
+<Warning>
+  `MODEL_PATH` in `app.py` is hardcoded to a developer's Windows filesystem path (`C:\Users\Xande\...`). This path will not exist on any other machine. Update it to the correct absolute path before running Traffic Reducer, or the sklearn model will fail to load. The application handles this gracefully — it falls back to argmax-only mode using live vehicle counts — but the `/predict` endpoint will return an error if the model is unavailable and `live_mode` is not used.
+</Warning>

@@ -1,0 +1,205 @@
+---
+title: "Troubleshooting common Traffic Reducer issues"
+sidebarTitle: "Troubleshooting"
+description: "Solutions for the most common errors when running Traffic Reducer: stream failures, model load errors, video capture problems, and performance issues."
+---
+
+Most issues fall into four categories — stream connectivity, model loading, video capture, and performance. Check the terminal output first; Traffic Reducer logs prefixed messages such as `[App]`, `[TrafficCamera]`, and `[ffmpeg]` that usually point directly to the problem. The sections below cover each known issue with its symptoms and recommended fix.
+
+---
+
+<Accordion title="TLS or Socket errors in the terminal">
+
+**Symptom:** Lines like the following appear repeatedly in the terminal:
+
+```
+[TLS] handshake failed
+socket: connection reset by peer
+```
+
+**Cause:** YouTube stream network instability during the HLS connection managed by the `ffmpeg` subprocess. These messages are printed by `ffmpeg`'s stderr drain thread and do not represent a crash.
+
+**Fix:** Ignore them. The processing loop in `_process_stream()` detects when the `ffmpeg` pipe terminates (`self.yt_proc.poll() is not None`) and automatically closes and re-opens the stream. If the stream stays down, the system enters a 60-second cooldown period (after all `yt-dlp` clients are exhausted) and then retries. No manual intervention is required.
+
+</Accordion>
+
+<Accordion title="Video feed shows a dark placeholder frame">
+
+**Symptom:** The dashboard camera card shows the message `"Conectando al stream en vivo..."` or `"Stream no disponible — reintentando..."` and the frame never updates to a live image.
+
+**Cause:** `yt-dlp` failed to resolve a direct stream URL from the YouTube link. This happens when the stream is offline, the URL has changed, or all six `yt-dlp` player clients (`android`, `tv_simply`, `web`, `mweb`, `tv`, `android_vr`) failed in sequence.
+
+**Fix:**
+
+1. Check your internet connection.
+2. Verify that `YOUTUBE_URL` in `app.py` is still an active live stream. Open the URL in a browser to confirm.
+3. After 3 consecutive `yt-dlp` failures, the placeholder message changes to `"YouTube no responde — cambia a Video local"` (if a local file exists). Switch to local video mode via the dashboard or:
+
+   ```bash
+   curl -X POST http://127.0.0.1:5000/set_source \
+     -H 'Content-Type: application/json' \
+     -d '{"mode": "local"}'
+   ```
+
+4. If the issue persists, update `yt-dlp` to the latest version, as YouTube regularly changes its extraction flow.
+
+</Accordion>
+
+<Accordion title="MODEL_PATH error on startup">
+
+**Symptom:** The terminal shows:
+
+```
+[App] No se pudo cargar el modelo: [Errno 2] No such file or directory: 'C:\\Users\\Xande\\important\\...'
+```
+
+**Cause:** `MODEL_PATH` in `app.py` is hardcoded to an absolute Windows path from the original developer's machine:
+
+```python
+MODEL_PATH = r"C:\Users\Xande\important\The Predictors\Haklaton\The Predictors-traffic_reducer\traffic_reducer_dataset\modelo_entrenado\modelo_semaforo_ia.pkl"
+```
+
+This path does not exist on other machines.
+
+**Fix:** Open `traffic_app/app.py` and replace `MODEL_PATH` with the correct absolute path to `modelo_semaforo_ia.pkl` on your system. For example:
+
+```python
+# macOS / Linux
+MODEL_PATH = "/home/youruser/traffic_reducer/traffic_reducer_dataset/modelo_entrenado/modelo_semaforo_ia.pkl"
+
+# Windows
+MODEL_PATH = r"C:\Users\youruser\traffic_reducer\traffic_reducer_dataset\modelo_entrenado\modelo_semaforo_ia.pkl"
+```
+
+Alternatively, construct the path dynamically relative to `app.py`:
+
+```python
+import os
+MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "traffic_reducer_dataset", "modelo_entrenado", "modelo_semaforo_ia.pkl"
+)
+```
+
+Restart the server after saving. If the model still fails to load, verify it was saved with a compatible scikit-learn version — `app.py` tries both `pickle.load` and `joblib.load` automatically.
+
+</Accordion>
+
+<Accordion title='"Video local no encontrado" in the dashboard'>
+
+**Symptom:** The VIDEO LOCAL button is disabled in the dashboard. The `/source_status` endpoint returns `"has_local": false`. Calling `/set_source` with `"mode": "local"` returns HTTP 400: `{"error": "Video local no encontrado en disco"}`.
+
+**Cause:** The expected file `traffic_app/static/traffic_dron_view.mp4` does not exist. This MP4 is not included in the git repository due to file size constraints.
+
+**Fix:** Place any drone-view or intersection traffic MP4 at that path:
+
+```
+traffic_app/static/traffic_dron_view.mp4
+```
+
+Alternatively, point `LOCAL_VIDEO_PATH` in `app.py` to a different file on your machine before starting the server:
+
+```python
+LOCAL_VIDEO_PATH = "/path/to/your/traffic_video.mp4"
+```
+
+Restart the server after making the change — `LOCAL_VIDEO_EXISTS` is evaluated once at startup.
+
+</Accordion>
+
+<Accordion title="Slow performance / high CPU usage">
+
+**Symptom:** Frame rate in the dashboard is low (choppy video), the `/stats` endpoint is sluggish, or CPU usage is near 100%.
+
+**Cause:** YOLOv8 inference (`_run_yolo()`) is CPU-bound when no GPU is available. The default model `yolov8m.pt` (medium) is significantly heavier than the nano or small variants.
+
+**Fix:**
+
+- **Switch to a lighter model.** Delete or rename `yolov8m.pt` and `yolov8s.pt` from the project root. Place `yolov8n.pt` (nano) there instead. `app.py` checks for `yolov8m.pt` then `yolov8s.pt` at startup; if neither exists, it falls back to `"yolov8m.pt"` which Ultralytics will auto-download. Name it `yolov8m.pt` to ensure it is picked up, or set `YOLO_MODEL_PATH` directly:
+
+  ```python
+  YOLO_MODEL_PATH = "yolov8n.pt"
+  ```
+
+- **Reduce inference image size.** In `video_processor.py`, the `_run_yolo()` method sets `imgsz=640`. Change this to `416` or `320` to reduce computation:
+
+  ```python
+  results = self.model(frame, ..., imgsz=416, ...)
+  ```
+
+- **Install GPU-enabled PyTorch.** If a CUDA-capable GPU is available, install the matching PyTorch build from [pytorch.org](https://pytorch.org/get-started/locally/) and Ultralytics will automatically use it.
+
+- **Increase local video speed.** If using local video, the frame rate is gated by `local_speed`. A higher speed value means fewer inference calls per real-time second:
+
+  ```bash
+  curl -X POST http://127.0.0.1:5000/set_speed \
+    -H 'Content-Type: application/json' \
+    -d '{"speed": 4.0}'
+  ```
+
+</Accordion>
+
+<Accordion title='"py" command not found'>
+
+**Symptom:**
+
+```
+'py' is not recognized as an internal or external command, operable program or batch file.
+```
+
+**Cause:** The README start command uses `py`, which is a Windows Python Launcher shortcut not available on macOS or Linux.
+
+**Fix:** Use the standard `python` or `python3` command instead:
+
+```bash
+python traffic_app/app.py
+# or
+python3 traffic_app/app.py
+```
+
+Make sure you are running the command from the project root directory (the folder that contains `traffic_app/`), not from inside `traffic_app/` itself.
+
+</Accordion>
+
+<Accordion title="Prediction always returns 0 (Norte)">
+
+**Symptom:** The `/predict` endpoint always returns `{"prediction": 0, ...}` and the green light on the dashboard always shows Norte, regardless of the traffic on camera.
+
+**Cause:** All four zone counts are zero. The prediction logic in `app.py` returns `0` when `sum(traffic_values) == 0`:
+
+```python
+result = int(np.argmax(traffic_values)) if sum(traffic_values) > 0 else 0
+```
+
+This means no vehicles are being detected in any zone.
+
+**Fix:**
+
+1. Confirm a video source is active — check `GET /source_status` and switch to `"youtube"` or `"local"` if the mode is `"idle"`.
+2. Watch the terminal for `[TrafficCamera] URL obtenida` (YouTube) or `Video local abierto` (local) to confirm the stream opened successfully.
+3. Check `/stats` — if `norte`, `sur`, `este`, and `oeste` are all `0` while the feed is running, the zone polygons may not intersect with the vehicles in the frame. The four zones are defined as normalised polygon coordinates in `video_processor.py` and are calibrated for the bundled drone-view camera angle.
+4. If you are using a different camera angle, reconfigure the zone polygons in the `self.zones` dictionary inside `TrafficCamera.__init__()` to match your field of view.
+
+</Accordion>
+
+<Accordion title="Flask port 5000 already in use">
+
+**Symptom:** The server fails to start with:
+
+```
+OSError: [Errno 48] Address already in use
+```
+
+**Cause:** Port 5000 is in use by another process. On macOS 12+, the AirPlay Receiver service binds to port 5000 by default.
+
+**Fix — macOS:** Open **System Settings → General → AirDrop & Handoff** and disable **AirPlay Receiver**.
+
+**Fix — any OS:** Change the port in `app.py`:
+
+```python
+app.run(debug=True, port=5001, use_reloader=False)
+```
+
+Then access the dashboard and API at `http://127.0.0.1:5001` instead.
+
+</Accordion>

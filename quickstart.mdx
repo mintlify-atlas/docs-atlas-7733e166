@@ -1,47 +1,115 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get started with Traffic Reducer in 5 minutes"
+sidebarTitle: "Quickstart"
+description: "Install dependencies, launch the Flask server, and see AI-driven traffic signal decisions in your browser in under five minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+This guide walks you from a freshly cloned repository to a live, AI-controlled traffic signal dashboard running in your browser. By the end you will have the Flask server running, a video source connected, and YOLOv8 actively counting vehicles and selecting green-light phases in real time.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+<Tip>
+  Python 3.10 or 3.11 is recommended. Some packages in `requirements.txt` — particularly `ultralytics` and `scikit-learn` — may have compatibility issues on Python 3.12 or later. Run `python --version` before you begin to confirm your environment.
+</Tip>
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Clone the repository and navigate to the project">
+    Clone the Traffic Reducer repository and change into the project root. All subsequent commands assume you are running from this directory.
 
     ```bash
-    npm install your-package
+    git clone https://github.com/Xander44-4/traffic_reducer.git
+    cd traffic_reducer
     ```
+
+    The project root contains the YOLO weight files (`yolov8m.pt`, `yolov8s.pt`, `yolov8n.pt`) and the `traffic_app/` directory with `app.py` and `video_processor.py`.
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Install all Python dependencies">
+    Install every required package in one command using the provided requirements file:
 
     ```bash
-    your-cli init
+    pip install -r requirements.txt
     ```
+
+    This installs the following packages:
+
+    | Package | What it provides |
+    |---|---|
+    | `flask` | Web server and REST API |
+    | `opencv-python` | Frame capture and image processing |
+    | `ultralytics` | YOLOv8 inference (also installs `imageio-ffmpeg`) |
+    | `yt-dlp` | YouTube live stream URL extraction |
+    | `pandas` | Data handling utilities |
+    | `numpy` | Numerical operations and zone detection |
+    | `joblib` | Alternative `.pkl` model loader |
+    | `scikit-learn` | Pre-trained signal-phase model compatibility |
+
+    Installation typically takes one to three minutes depending on your internet speed. `ultralytics` is the largest dependency as it pulls in PyTorch.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Start the Traffic Reducer server">
+    Launch the Flask application from the project root:
 
     ```bash
-    your-cli start
+    py traffic_app/app.py
     ```
+
+    On macOS or Linux, use:
+
+    ```bash
+    python3 traffic_app/app.py
+    ```
+
+    You will see the following startup output in your terminal:
+
+    ```
+    [App] Modelo YOLO: yolov8m.pt
+    [App] Video local: .../traffic_dron_view.mp4 (OK)
+    [App] Modo por defecto: idle
+    Iniciando Traffic Reducer Server...
+    http://127.0.0.1:5000
+    ```
+
+    The server starts in **idle mode** by default — the `TrafficCamera` background thread is running but no video source is active yet. The YOLO model is loaded and ready; video processing begins as soon as you choose a source in the next steps.
+
+    <Note>
+      You may see `TLS` or `Socket` error messages in the console after the server starts. These are harmless. `TrafficCamera` includes automatic reconnection logic that handles transient stream failures, so the system will recover without any action on your part.
+    </Note>
+  </Step>
+
+  <Step title="Open the dashboard in your browser">
+    With the server running, open your web browser and navigate to:
+
+    ```
+    http://127.0.0.1:5000
+    ```
+
+    You will see the Traffic Reducer dashboard. The video panel shows a placeholder frame with the message **"Selecciona una fuente para comenzar"** because the system is in idle mode. The zone count panels (Norte, Sur, Este, Oeste) display zeroes until a video source is connected.
+  </Step>
+
+  <Step title="Choose a video source and activate AI control">
+    1. Click the **source modal button** in the dashboard toolbar. A dialog appears offering two options:
+       - **YouTube live stream** — connects to the configured live traffic camera via `yt-dlp` and streams it through FFmpeg. An internet connection is required.
+       - **Local video** — plays `traffic_app/static/traffic_dron_view.mp4` at 0.5× speed from disk, with no internet dependency.
+
+    2. Select your preferred source and confirm. The `POST /set_source` API endpoint switches `TrafficCamera` to the chosen mode. The console will print the connection status — for YouTube mode you will see:
+
+       ```
+       [TrafficCamera] URL obtenida con cliente android
+       [TrafficCamera] Stream YouTube abierto (ffmpeg pipe) — esperando primer frame...
+       ```
+
+       When frames start arriving you will see **"Stream Connected"** in the console output. This confirms that YOLOv8 is actively processing frames and zone counts are being updated.
+
+    3. Click **"Activar Control"** (or the **LIVE SIMULATION MODE** toggle) to enable AI decision mode. The system now calls `POST /predict` with `live_mode: true` on each cycle, applies `np.argmax` across the four zone counts, and sets the winning direction as the active green-light phase. The dashboard signal display updates in real time to reflect the AI decision.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## What to expect
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+Once a source is active and AI control is enabled, the dashboard updates every second with:
+
+- **Annotated video** — bounding boxes colour-coded by zone (amber for Norte, cyan for Sur, green for Este, purple for Oeste), plus yellow boxes for pedestrians and red boxes for detected emergency vehicles
+- **Zone vehicle counts** — live counts for Norte, Sur, Este, and Oeste lanes
+- **Active phase** — the zone currently holding the green light, as decided by the majority-rule algorithm
+- **Priority flags** — a pedestrian or emergency indicator when an override is in effect
+
+From here you can explore the [REST API](/reference/api-endpoints) to integrate Traffic Reducer with external systems, or read the [Architecture guide](/concepts/architecture) to understand how the detection pipeline and threading model work under the hood.

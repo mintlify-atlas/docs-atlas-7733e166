@@ -1,0 +1,72 @@
+---
+title: "Selecting a YOLOv8 model variant for detection"
+sidebarTitle: "Model Selection"
+description: "Choose between YOLOv8 nano, small, and medium weight files to balance detection accuracy and inference speed for your deployment hardware."
+---
+
+Traffic Reducer ships with support for three YOLOv8 weight files and automatically selects the best available one at startup — no manual configuration required for the common case. The selection logic in `app.py` checks for weight files in the project root directory and falls back gracefully if none are found locally.
+
+## Auto-selection logic
+
+At startup, `app.py` resolves the project root and checks for weight files in the following priority order:
+
+```python
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_yolov8m_local = os.path.join(PROJECT_ROOT, "yolov8m.pt")
+_yolov8s_local = os.path.join(PROJECT_ROOT, "yolov8s.pt")
+if os.path.exists(_yolov8m_local):
+    YOLO_MODEL_PATH = _yolov8m_local
+elif os.path.exists(_yolov8s_local):
+    YOLO_MODEL_PATH = _yolov8s_local
+else:
+    YOLO_MODEL_PATH = "yolov8m.pt"  # auto-download fallback
+```
+
+If neither `yolov8m.pt` nor `yolov8s.pt` is found locally, Ultralytics will attempt to download `yolov8m.pt` from its model hub the first time the application starts. Ensure the machine has internet access on first run if no local weights are present.
+
+## Model comparison
+
+| Weight file | Parameters | Best for |
+|---|---|---|
+| `yolov8n.pt` | ~3M | Low-power hardware, fast CPU inference |
+| `yolov8s.pt` | ~11M | Balanced speed and accuracy |
+| `yolov8m.pt` | ~26M | Best accuracy; GPU recommended |
+
+## Forcing a specific model
+
+To pin the system to a particular weight file, use one of these approaches:
+
+- **Remove unwanted files** — delete or rename the `.pt` files you do not want in the project root. The auto-selection logic will fall through to the next available file.
+- **Set `YOLO_MODEL_PATH` directly** — edit `app.py` and hard-code the path before the `TrafficCamera` constructor is called:
+
+```python
+# In app.py — bypass auto-selection entirely
+YOLO_MODEL_PATH = "/opt/traffic_reducer/yolov8n.pt"
+```
+
+## Inference parameters
+
+`TrafficCamera` exposes four inference parameters that control how YOLOv8 processes each frame inside `_run_yolo()`. These are set once at construction time and apply to every frame throughout the session.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `conf` | `0.25` | Minimum confidence score to accept a detection |
+| `iou` | `0.5` | IoU threshold for non-maximum suppression |
+| `max_det` | `300` | Maximum number of detections per frame |
+| `imgsz` | `640` | Inference input resolution (pixels) |
+
+To override any of these values, pass them as keyword arguments when `TrafficCamera` is instantiated in `app.py`:
+
+```python
+camera = TrafficCamera(
+    YOUTUBE_URL,
+    model_path=YOLO_MODEL_PATH,
+    conf=0.35,   # stricter confidence — fewer false positives
+    iou=0.45,
+    max_det=200,
+)
+```
+
+<Tip>
+  On machines without a GPU, switch to `yolov8n.pt` and reduce `imgsz` to `416` to keep per-frame inference well under 100 ms. The smaller input resolution has a modest accuracy cost but is often negligible for overhead drone-view footage.
+</Tip>

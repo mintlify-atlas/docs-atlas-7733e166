@@ -1,0 +1,110 @@
+---
+title: "Signal phase decision: how the green light is chosen"
+sidebarTitle: "Signal Decision"
+description: "Traffic Reducer uses a majority-rule algorithm — the lane with the most detected vehicles wins the green light — with sklearn model support for phase classification."
+---
+
+Traffic Reducer determines which direction receives the green light by applying a simple majority-rule (argmax) algorithm to the four live vehicle counts. The approach requires no look-ahead or timing history: whichever approach lane currently holds the largest number of detected vehicles is granted the green phase immediately. This decision executes on every `/predict` call — up to once every 2 000 ms in live mode — so the signal adapts continuously as the intersection fills and empties.
+
+## Core decision logic
+
+The `/predict` endpoint reads the current per-zone counts (from live detection or from the request body in manual mode) and selects the phase index using `np.argmax`:
+
+```python
+traffic_values = [norte, sur, este, oeste]
+result = int(np.argmax(traffic_values)) if sum(traffic_values) > 0 else 0
+```
+
+The result is an integer 0–3 that maps directly to a compass direction:
+
+| Index | Direction |
+|---|---|
+| 0 | Norte (North) |
+| 1 | Sur (South) |
+| 2 | Este (East) |
+| 3 | Oeste (West) |
+
+When `live_mode` is `True` in the request body, the endpoint also calls `camera.set_phase(result)`, which writes the human-readable label (`"NORTE"`, `"SUR"`, `"ESTE"`, `"OESTE"`) back into `traffic_state['phase']` so it appears in the video overlay and is returned by `/stats`.
+
+<Note>
+  If all four counts are zero — meaning no vehicles are detected in any zone — `sum(traffic_values)` is 0 and the system defaults to phase **0 (Norte)** rather than choosing randomly. This prevents undefined behaviour during idle periods or when the camera source is not yet streaming.
+</Note>
+
+## Sklearn model
+
+At startup, `app.py` loads `modelo_semaforo_ia.pkl`, a pre-trained sklearn classifier:
+
+```python
+def load_model():
+    try:
+        with open(MODEL_PATH, 'rb') as f:
+            return pickle.load(f)
+    except Exception:
+        try:
+            return joblib.load(MODEL_PATH)
+        except Exception as e:
+            print(f"[App] No se pudo cargar el modelo: {e}")
+            return None
+
+model = load_model()
+```
+
+The model object is held in memory and checked before each `/predict` call — if loading failed, the endpoint returns a `500` error rather than silently falling back. In the current live implementation the `np.argmax` decision rule is used directly, with the model available as the foundation for extended classifiers (e.g., incorporating historical cycle data or time-of-day features).
+
+## Training dataset
+
+The sklearn model was trained on `dataset_sintetico_entrenamiento.csv`, a synthetic dataset with five columns: the four directional counts and the expected winner index (`GANADOR_ESPERADO`):
+
+```
+Norte,Sur,Este,Oeste,GANADOR_ESPERADO
+49,38,53,13,2
+4,58,46,9,1
+7,12,23,39,3
+7,3,38,18,2
+49,45,14,24,0
+48,12,57,6,2
+```
+
+`GANADOR_ESPERADO` matches the `np.argmax` of the four count columns in every row, confirming that the training labels are consistent with the live decision rule. The dataset uses counts in the range 0–80, matching the random range used by the `/simulate` endpoint.
+
+## Simulation endpoint
+
+During development or UI testing, the `/simulate` endpoint returns synthetic random counts without requiring a live camera feed:
+
+```python
+@app.route('/simulate', methods=['GET'])
+def simulate():
+    return jsonify({
+        'norte': random.randint(0, 80),
+        'sur':   random.randint(0, 80),
+        'este':  random.randint(0, 80),
+        'oeste': random.randint(0, 80)
+    })
+```
+
+The frontend can call `/simulate` to populate its sliders, then immediately POST those values to `/predict` to exercise the full decision path without any camera hardware.
+
+## Frontend polling behaviour
+
+The web dashboard drives the signal display through two polling loops:
+
+| Mode | Trigger | Endpoint | Interval |
+|---|---|---|---|
+| Live | Timer | `POST /predict` with `live_mode: true` | Every 2 000 ms |
+| Manual | Slider change | `POST /predict` with explicit counts | On each input event |
+
+In live mode the frontend passes `{ live_mode: true }` and the server reads counts directly from `traffic_state`. In manual mode the user adjusts per-direction sliders and the browser sends the slider values; the server ignores the camera state entirely. Both modes receive the same response shape:
+
+```json
+{
+  "prediction": 2,
+  "traffic_data": {
+    "norte": 12,
+    "sur": 7,
+    "este": 34,
+    "oeste": 5
+  }
+}
+```
+
+The dashboard also polls `GET /stats` every 1 500 ms independently of `/predict`, keeping the vehicle-count display, pedestrian count, and emergency indicator up to date even between signal-decision calls.

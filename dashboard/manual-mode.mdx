@@ -1,0 +1,95 @@
+---
+title: "Manual simulation mode: test signal decisions"
+sidebarTitle: "Manual Mode"
+description: "Use the dashboard's range sliders to manually set vehicle counts per direction and immediately see which lane the AI model would prioritize."
+---
+
+Manual mode lets you test the signal decision algorithm with arbitrary vehicle counts without needing a live camera feed or an active video source. It is the default state of the dashboard — the four range sliders are enabled from the moment the page loads, and every slider movement fires an immediate prediction request.
+
+## How manual mode works
+
+When the **Simulación en vivo** toggle is **off** (the default), all four range sliders in the Manual Control section are enabled. Moving any slider immediately calls `POST /predict` with the current values from all four inputs. No debounce delay is applied — the request fires on every `input` event.
+
+The sliders and their identifiers:
+
+| Slider label | HTML input ID | Direction index |
+|---|---|---|
+| Norte | `input-north` | 0 |
+| Sur | `input-south` | 1 |
+| Este | `input-east` | 2 |
+| Oeste | `input-west` | 3 |
+
+Each slider accepts integer values from `0` to `100` (representing vehicle count) with a default of `10`. A live numeric readout beneath each slider updates on every change.
+
+## Visual density feedback
+
+As you drag a slider, the corresponding road arm in the intersection visualization updates its **cars density bar** opacity in real time using this formula from `script.js`:
+
+```javascript
+carsVisuals[direction].style.opacity = 0.05 + (value / 100) * 0.6;
+```
+
+A value of `0` produces opacity `0.05` (nearly invisible); a value of `100` produces opacity `0.65` (fully rendered). This gives immediate visual feedback about relative traffic load across all four directions before the prediction response arrives.
+
+## Prediction request and response
+
+Every slider interaction sends this request to the server:
+
+```json
+// POST /predict
+{
+  "norte": 10,
+  "sur": 55,
+  "este": 10,
+  "oeste": 10
+}
+```
+
+The server computes the winning direction using `np.argmax([norte, sur, este, oeste])` and responds with the zero-based direction index and the echo of the submitted counts:
+
+```json
+{
+  "prediction": 1,
+  "traffic_data": {
+    "norte": 10.0,
+    "sur": 55.0,
+    "este": 10.0,
+    "oeste": 10.0
+  }
+}
+```
+
+`prediction` maps to directions as follows: `0` = NORTE, `1` = SUR, `2` = ESTE, `3` = OESTE.
+
+On receiving the response the dashboard:
+1. Activates the winning direction's green traffic light bulb in the intersection graphic.
+2. Sets all other lights to red.
+3. Updates the **Prioridad activa** status card with the direction name.
+4. Highlights the winning road arm with the `.active-road` CSS class.
+
+## Randomized scenarios with `/simulate`
+
+To quickly generate a realistic but random traffic scenario, use the **Activar Control** button while live mode is **off**, or call the `/simulate` endpoint directly:
+
+```bash
+curl http://127.0.0.1:5000/simulate
+```
+
+```json
+{ "norte": 17, "sur": 8, "este": 42, "oeste": 61 }
+```
+
+The endpoint returns four random integers between `0` and `80`, one per direction. The values are not automatically applied to the sliders via the API — use the response data to manually set slider positions, or integrate the endpoint into your own test script.
+
+## Priority display edge cases
+
+The **Prioridad activa** card can show values other than a direction name:
+
+- **`EMERGENCIA`** (rendered in `#b64400`) — appears when `traffic_data.emergency` is `true` in the prediction response. This overrides the direction name regardless of which direction won.
+- **`PEATONES`** (rendered in `#707070`) — appears when `traffic_data.pedestrians` exceeds `5`.
+
+In manual mode with the `/predict` endpoint, `emergency` and `pedestrians` are not part of the slider payload. They will only appear in the priority display if the server-side model or camera pipeline injects them into the response.
+
+<Tip>
+Set one direction to `100` and leave all others at `0` to verify the green light correctly assigns to that direction. This is the fastest sanity check after a new deployment — if the light does not match the maxed-out slider, confirm the `/predict` route is reachable and the model loaded successfully at startup.
+</Tip>

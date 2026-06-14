@@ -1,0 +1,91 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "Traffic Reducer",
+  "projectDescription": "An AI-powered adaptive traffic signal control system that uses YOLOv8 computer vision to count vehicles at each intersection lane and dynamically assigns green lights to reduce urban congestion.",
+  "theme": "luma",
+  "primaryColor": "#0071e3",
+  "lightColor": "#e8f1fc",
+  "darkColor": "#003580",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "How It Works",
+            "pages": [
+              "concepts/architecture",
+              "concepts/vehicle-detection",
+              "concepts/signal-decision",
+              "concepts/priority-system"
+            ]
+          },
+          {
+            "group": "Using the Dashboard",
+            "pages": [
+              "dashboard/overview",
+              "dashboard/video-sources",
+              "dashboard/manual-mode",
+              "dashboard/live-mode"
+            ]
+          },
+          {
+            "group": "Configuration & Deployment",
+            "pages": [
+              "configuration/model-selection",
+              "configuration/detection-zones",
+              "configuration/environment",
+              "deployment/production"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/api-endpoints",
+              "reference/traffic-camera-class",
+              "reference/dataset",
+              "reference/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time vehicle detection using YOLOv8 (nano, small, or medium variants)",
+    "Four-direction intersection zone mapping (North, South, East, West)",
+    "Majority-rule signal decision: lane with the most vehicles gets the green light",
+    "Pedestrian detection with safety priority override",
+    "Emergency vehicle detection via color-based HSV analysis (red/yellow/blue lights)",
+    "Live YouTube traffic stream ingestion via yt-dlp and FFmpeg pipe",
+    "Local video file support with adjustable playback speed",
+    "Web dashboard with real-time camera feed, intersection visualization, and manual controls",
+    "REST API for programmatic traffic data querying and signal prediction",
+    "Sklearn-based trained model (modelo_semaforo_ia.pkl) for signal phase classification"
+  ],
+  "publicApiSurface": [
+    "GET / — serves the main web dashboard",
+    "GET /video_feed — MJPEG stream of the annotated camera feed",
+    "GET /stats — returns current vehicle counts, pedestrians, emergency flag, phase, and priority",
+    "POST /predict — accepts manual or live vehicle counts, returns signal prediction (0=Norte,1=Sur,2=Este,3=Oeste)",
+    "POST /set_source — switches video source mode: 'youtube' or 'local'",
+    "POST /set_speed — sets local video playback speed multiplier",
+    "GET /source_status — returns current mode and local video availability",
+    "GET /simulate — returns randomized vehicle count data for testing",
+    "TrafficCamera(youtube_url, model_path, local_video_path, default_mode, conf, iou, max_det, local_speed)",
+    "TrafficCamera.start() — launches the background video processing thread",
+    "TrafficCamera.get_frame() — returns the latest JPEG-encoded annotated frame",
+    "TrafficCamera.get_counts() — returns the full traffic state dictionary",
+    "TrafficCamera.set_mode(mode) — switches between 'idle', 'youtube', 'local'",
+    "TrafficCamera.set_phase(phase_id) — manually sets the active signal phase (0-3)",
+    "TrafficCamera.set_local_speed(speed) — updates local video playback speed"
+  ]
+}

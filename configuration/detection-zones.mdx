@@ -1,0 +1,90 @@
+---
+title: "Configuring intersection detection zones"
+sidebarTitle: "Detection Zones"
+description: "How Traffic Reducer maps camera pixels to compass-direction zones using normalized polygon coordinates, and how to adjust zones for different camera angles."
+---
+
+Detection zones are the quadrilateral regions in the camera frame that correspond to each directional lane at the intersection. Every vehicle detected by YOLOv8 is assigned to one of four zones — Norte, Sur, Este, or Oeste — based on where its bounding-box centroid falls. Vehicles whose centroids do not land inside any zone are labelled `other` and excluded from the traffic counts used for signal-phase decisions.
+
+## Default zone definitions
+
+Zones are defined in `TrafficCamera.__init__()` inside `video_processor.py` as normalized coordinate arrays. Each value is in the range `0.0`–`1.0` relative to the frame dimensions, so the same zone definition works regardless of the actual pixel resolution of the video feed.
+
+```python
+self.zones = {
+    'norte': np.array([[0.00, 0.00], [0.43, 0.05], [0.43, 0.58], [0.27, 0.65]]),
+    'este':  np.array([[0.47, 0.07], [1.00, 0.17], [1.00, 0.40], [0.57, 0.55]]),
+    'sur':   np.array([[0.53, 0.55], [0.96, 0.42], [0.99, 0.94], [0.63, 1.00]]),
+    'oeste': np.array([[0.00, 0.73], [0.55, 0.70], [0.43, 1.00], [0.00, 1.00]]),
+}
+```
+
+These coordinates are tuned for the default 854 × 480 drone-view video (`traffic_dron_view.mp4`) and the bundled YouTube live stream. For a different camera angle, mounting height, or intersection geometry, the coordinates must be updated.
+
+## Zone color overlays
+
+The live feed renders a colored polygon border around each zone to aid visual debugging. The overlay colors are also used for bounding boxes drawn around vehicles that have been matched to a zone.
+
+| Zone | Overlay color | BGR value |
+|---|---|---|
+| Norte | Amber | `(255, 180, 60)` |
+| Sur | Cyan | `(60, 200, 255)` |
+| Este | Green | `(90, 230, 130)` |
+| Oeste | Purple | `(200, 120, 255)` |
+
+Unmatched vehicles (`other`) are drawn with a neutral grey box `(130, 130, 130)`.
+
+## How to tune zones for a new camera
+
+<Steps>
+  <Step title="Capture a still frame">
+    Pause the live feed or extract a single frame from your camera source. Save it as a PNG or JPEG so you can open it in an image editor.
+  </Step>
+  <Step title="Identify lane corners">
+    In the image editor, locate the four pixel corners that bound each directional lane as seen from the camera's perspective. Note down the `(x, y)` pixel coordinates for each corner.
+  </Step>
+  <Step title="Normalize the coordinates">
+    Convert pixel coordinates to the `0.0`–`1.0` range using the frame dimensions:
+
+    ```python
+    x_norm = pixel_x / frame_width
+    y_norm = pixel_y / frame_height
+    ```
+
+    For example, a point at pixel `(427, 230)` in an 854 × 480 frame normalizes to `(0.50, 0.48)`.
+  </Step>
+  <Step title="Update the zones dictionary">
+    Open `video_processor.py` and replace the coordinate arrays in `TrafficCamera.__init__()` with your new values:
+
+    ```python
+    self.zones = {
+        'norte': np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4]]),
+        'este':  np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4]]),
+        'sur':   np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4]]),
+        'oeste': np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4]]),
+    }
+    ```
+
+    Restart the server and confirm the colored zone outlines align with the actual lane boundaries on the live feed.
+  </Step>
+</Steps>
+
+## Vehicle assignment logic
+
+Zone matching is performed inside `_run_yolo()` using OpenCV's `cv2.pointPolygonTest()`. For each detected vehicle, the method computes the centroid of its bounding box and tests it against each zone polygon in order:
+
+```python
+for zone_name, poly in self.zones.items():
+    if cv2.pointPolygonTest(
+        (poly * [w, h]).astype(np.int32), (cx, cy), False
+    ) >= 0:
+        counts[zone_name] += 1
+        matched_zone = zone_name
+        break
+```
+
+A return value ≥ 0 from `pointPolygonTest` means the centroid is on the boundary or inside the polygon. The loop breaks on the first match, so each vehicle is counted in at most one zone.
+
+<Note>
+  Zones can overlap. A vehicle centroid that falls inside an overlapping region is assigned to whichever zone is tested first. The fixed iteration order is **Norte → Este → Sur → Oeste**, matching Python's dict insertion order as defined in `__init__()`. Design your zones to minimize overlap, particularly near the centre of the intersection.
+</Note>

@@ -1,0 +1,208 @@
+---
+title: "TrafficCamera class API reference"
+sidebarTitle: "TrafficCamera"
+description: "Complete reference for the TrafficCamera class: constructor parameters, public methods, traffic state dictionary schema, and threading model."
+---
+
+`TrafficCamera` is the core class in `video_processor.py` that manages video ingestion, YOLOv8 inference, and the shared traffic state in a background daemon thread. It supports three source modes — idle, YouTube live stream, and local MP4 — and can be switched between them at runtime without restarting the server.
+
+---
+
+## Constructor
+
+```python
+TrafficCamera(
+    youtube_url,
+    model_path='yolov8m.pt',
+    local_video_path=None,
+    default_mode='idle',
+    conf=0.25,
+    iou=0.5,
+    max_det=300,
+    local_speed=1.0
+)
+```
+
+<ParamField path="youtube_url" type="string" required>
+  Full URL of the YouTube live stream (e.g., `"https://www.youtube.com/live/1H0iTzv2jiQ"`). Used by `yt-dlp` to resolve the direct HLS/M3U8 stream URL, which is then piped through `ffmpeg`.
+</ParamField>
+
+<ParamField path="model_path" type="string" default="'yolov8m.pt'">
+  Path to the YOLOv8 `.pt` weights file. At startup, `app.py` checks for `yolov8m.pt` then `yolov8s.pt` in the project root and passes the first match. Falls back to `"yolov8m.pt"` (relying on Ultralytics auto-download) if neither is found.
+</ParamField>
+
+<ParamField path="local_video_path" type="string | None" default="None">
+  Absolute path to a local MP4 video file. Set to `None` if no local file exists. `app.py` defaults this to `traffic_app/static/traffic_dron_view.mp4`.
+</ParamField>
+
+<ParamField path="default_mode" type="string" default="'idle'">
+  Initial source mode on construction. Valid values: `"idle"`, `"youtube"`, `"local"`. Any unrecognised value falls back to `"idle"`.
+</ParamField>
+
+<ParamField path="conf" type="float" default="0.25">
+  YOLO detection confidence threshold. Detections below this score are discarded.
+</ParamField>
+
+<ParamField path="iou" type="float" default="0.5">
+  IoU threshold for Non-Maximum Suppression. Higher values allow more overlapping boxes.
+</ParamField>
+
+<ParamField path="max_det" type="integer" default="300">
+  Maximum number of detections kept per frame after NMS.
+</ParamField>
+
+<ParamField path="local_speed" type="float" default="1.0">
+  Playback speed multiplier for local video. Clamped to `≥ 0.05` in the constructor via `max(0.05, float(local_speed))`.
+</ParamField>
+
+---
+
+## Public methods
+
+### `start()`
+
+Marks the camera as running and launches the background processing thread. Call this exactly once after constructing the object.
+
+```python
+camera = TrafficCamera(YOUTUBE_URL, model_path=YOLO_MODEL_PATH)
+camera.start()
+```
+
+The thread is created as a daemon (`daemon=True`), so it terminates automatically when the main process exits. Do not call `start()` more than once.
+
+---
+
+### `get_frame() → bytes`
+
+Returns the latest JPEG-encoded annotated frame as a `bytes` object. This is the data yielded by the `/video_feed` endpoint. Thread-safe — acquires `self.lock` before reading.
+
+```python
+frame_bytes = camera.get_frame()
+```
+
+If no frame has been produced yet (e.g., source is idle or stream is connecting), returns the JPEG-encoded placeholder frame for the current mode.
+
+---
+
+### `get_counts() → dict`
+
+Returns a shallow copy of the full `traffic_state` dictionary. Thread-safe — acquires `self.lock` before copying. See [traffic\_state schema](#traffic_state-dictionary-schema) for the full key list.
+
+```python
+state = camera.get_counts()
+print(state['norte'], state['emergency'])
+```
+
+---
+
+### `set_mode(mode: str) → None`
+
+Switches the active video source at runtime. Closes any open `cv2.VideoCapture` or `ffmpeg` subprocess immediately, resets `last_yolo_data` and `yolo_cache`, and stores a mode-appropriate placeholder frame.
+
+```python
+camera.set_mode('youtube')   # switch to YouTube live stream
+camera.set_mode('local')     # switch to local MP4
+camera.set_mode('idle')      # stop processing
+```
+
+Silently ignores invalid mode strings. Calling `set_mode()` with the already-active mode is a no-op (checked under the lock).
+
+---
+
+### `set_phase(phase_id: int) → None`
+
+Manually overrides the current signal phase label. Updates both `self.current_phase` and `traffic_state['phase']` atomically under the lock.
+
+```python
+camera.set_phase(0)  # NORTE
+camera.set_phase(1)  # SUR
+camera.set_phase(2)  # ESTE
+camera.set_phase(3)  # OESTE
+```
+
+| `phase_id` | Label |
+|---|---|
+| `0` | `"NORTE"` |
+| `1` | `"SUR"` |
+| `2` | `"ESTE"` |
+| `3` | `"OESTE"` |
+
+An unrecognised `phase_id` produces the label `"PHASE-{phase_id}"`. The `/predict` endpoint calls this automatically when `live_mode` is `true`.
+
+---
+
+### `set_local_speed(speed: float) → float`
+
+Updates the playback speed for local video. The value is clamped to `≥ 0.05`. If a local video is currently open, also recalculates `_local_frame_interval` and resets the next-frame timer immediately. Returns the applied (clamped) speed.
+
+```python
+applied = camera.set_local_speed(2.0)
+print(applied)  # 2.0
+
+applied = camera.set_local_speed(0.0)
+print(applied)  # 0.05  (clamped)
+```
+
+---
+
+## traffic\_state dictionary schema
+
+`get_counts()` returns a copy of this dictionary. All fields are updated under `self.lock` by the background thread after each completed YOLOv8 inference pass.
+
+<ResponseField name="norte" type="int">
+  Number of vehicles whose bounding-box centroid falls inside the North zone polygon.
+</ResponseField>
+
+<ResponseField name="sur" type="int">
+  Number of vehicles whose bounding-box centroid falls inside the South zone polygon.
+</ResponseField>
+
+<ResponseField name="este" type="int">
+  Number of vehicles whose bounding-box centroid falls inside the East zone polygon.
+</ResponseField>
+
+<ResponseField name="oeste" type="int">
+  Number of vehicles whose bounding-box centroid falls inside the West zone polygon.
+</ResponseField>
+
+<ResponseField name="pedestrians" type="int">
+  Total pedestrian detections (YOLO class `0`) across the entire frame (not zone-filtered).
+</ResponseField>
+
+<ResponseField name="emergency" type="bool">
+  `True` when a vehicle of class `5` (bus) or class `7` (truck) passes the color-signature check in `_looks_like_emergency()` — red ratio `> 0.18`, yellow ratio `> 0.22`, or combined red+blue threshold.
+</ResponseField>
+
+<ResponseField name="phase" type="str">
+  Current phase label as set by `set_phase()`. Initialised to `"INIT"` at construction.
+</ResponseField>
+
+<ResponseField name="frame" type="bytes">
+  JPEG-encoded bytes of the most recently processed and annotated frame, including zone overlays and bounding boxes. Returned directly by `get_frame()`.
+</ResponseField>
+
+---
+
+## Threading model
+
+Understanding the threading model is important when integrating `TrafficCamera` into other applications.
+
+**Background processing thread**
+
+The single daemon thread started by `start()` runs `_process_stream()` in a continuous loop. It is responsible for opening the source, reading frames, submitting YOLO jobs, drawing overlays, and writing the encoded frame to `traffic_state`. There is no mechanism to stop and restart this thread — it runs for the lifetime of the process.
+
+**Lock discipline**
+
+`threading.Lock` (`self.lock`) protects every read and write of `traffic_state`. All public methods that touch `traffic_state` — `get_frame()`, `get_counts()`, `set_mode()`, `set_phase()`, `set_local_speed()` — acquire the lock before accessing shared data. Never call these methods while holding the lock from application code.
+
+**YOLO executor**
+
+YOLOv8 inference runs inside a `ThreadPoolExecutor(max_workers=1)`. The background thread submits one inference job at a time via `self.executor.submit()` and stores the `Future` in `self.pending_yolo`. On each loop iteration, `_collect_yolo_result()` checks whether the future is done and, if so, applies the results to `traffic_state`. This design decouples frame capture from inference latency.
+
+**Frame cache (local video only)**
+
+In `"local"` mode, inference results are stored in `self.yolo_cache` keyed by the OpenCV frame index (`cv2.CAP_PROP_POS_FRAMES`). When the video loops or the same frame index is revisited, the cached result is reused instead of re-running YOLO — this significantly reduces CPU load during slow-speed playback.
+
+<Warning>
+  `yolo_cache` is cleared every time `set_mode()` is called. It is not bounded in size, so very long local videos may accumulate a large cache. If memory usage is a concern, periodically clear it with `camera.yolo_cache = {}` (under the lock from application code is not required since the dict itself is replaced atomically in `set_mode()`).
+</Warning>

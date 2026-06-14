@@ -1,0 +1,117 @@
+---
+title: "Traffic Reducer training dataset and model"
+sidebarTitle: "Dataset & Model"
+description: "Details of the synthetic training dataset used to train modelo_semaforo_ia.pkl: schema, generation method, label distribution, and how to retrain."
+---
+
+The scikit-learn phase-classifier model (`modelo_semaforo_ia.pkl`) was trained on a fully synthetic dataset that maps four-direction vehicle counts to the expected winning signal phase. The model is loaded at server startup by `app.py` and called on every `/predict` request.
+
+---
+
+## Dataset file
+
+```
+traffic_reducer_dataset/modelo_entrenado/dataset_sintetico_entrenamiento.csv
+```
+
+The CSV contains **5,000 rows** (plus header). Each row represents one simulated traffic snapshot at a four-way intersection.
+
+---
+
+## Schema
+
+| Column | Type | Range | Description |
+|---|---|---|---|
+| `Norte` | int | 0–59 | Vehicle count in the North lane |
+| `Sur` | int | 0–59 | Vehicle count in the South lane |
+| `Este` | int | 0–59 | Vehicle count in the East lane |
+| `Oeste` | int | 0–59 | Vehicle count in the West lane |
+| `GANADOR_ESPERADO` | int | 0–3 | Expected winning phase (0 = Norte, 1 = Sur, 2 = Este, 3 = Oeste) |
+
+---
+
+## Sample rows
+
+```csv
+Norte,Sur,Este,Oeste,GANADOR_ESPERADO
+49,38,53,13,2
+4,58,46,9,1
+7,12,23,39,3
+7,3,38,18,2
+49,45,14,24,0
+48,12,57,6,2
+8,46,58,23,2
+54,1,59,50,2
+17,24,22,50,3
+31,39,9,13,1
+```
+
+---
+
+## Label generation logic
+
+`GANADOR_ESPERADO` is always the index of the maximum count across the four directions:
+
+```
+GANADOR_ESPERADO = argmax([Norte, Sur, Este, Oeste])
+```
+
+For example, row `49,38,53,13` → `argmax([49,38,53,13])` = index `2` (Este). The dataset encodes a strict majority-rule policy: whichever direction has the most vehicles gets the green phase. There are no tie-breaking rules in the synthetic data; ties are avoided by construction during generation.
+
+<Note>
+  Because the dataset is purely synthetic and labels are always `argmax`, any reasonable classifier achieves near-100% accuracy. The real intelligence of Traffic Reducer lies in the YOLOv8 vehicle detection pipeline, not the phase classifier. The classifier's job is simply to formalise the argmax rule as a trained artifact that can be swapped for a more sophisticated policy in the future.
+</Note>
+
+---
+
+## Loading and testing the model
+
+```python
+import pickle
+import numpy as np
+
+with open('traffic_reducer_dataset/modelo_entrenado/modelo_semaforo_ia.pkl', 'rb') as f:
+    model = pickle.load(f)
+
+# Predict: Norte=10, Sur=50, Este=10, Oeste=10 → Sur wins (index 1)
+prediction = model.predict([[10, 50, 10, 10]])
+print(prediction)  # [1]
+```
+
+If `pickle.load` raises an error (e.g., the file was saved with `joblib`), use `joblib.load` instead — `app.py` tries both automatically:
+
+```python
+import joblib
+
+model = joblib.load('traffic_reducer_dataset/modelo_entrenado/modelo_semaforo_ia.pkl')
+prediction = model.predict([[10, 50, 10, 10]])
+print(prediction)  # [1]
+```
+
+---
+
+## Retraining with scikit-learn
+
+To retrain the classifier from scratch — for example after extending the dataset or switching algorithms — run the following script from the project root:
+
+```python
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+import joblib
+
+df = pd.read_csv('traffic_reducer_dataset/modelo_entrenado/dataset_sintetico_entrenamiento.csv')
+X = df[['Norte', 'Sur', 'Este', 'Oeste']]
+y = df['GANADOR_ESPERADO']
+
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+clf.fit(X, y)
+
+joblib.dump(clf, 'traffic_reducer_dataset/modelo_entrenado/modelo_semaforo_ia.pkl')
+print("Model saved.")
+```
+
+After saving, restart `traffic_app/app.py` so the new model is picked up at startup. The `MODEL_PATH` variable in `app.py` must point to the correct absolute path on your machine.
+
+<Tip>
+  To test a different policy — for example, one that weights pedestrian counts or time-of-day — extend the CSV with additional columns and update the `X` feature matrix in the training script. The `/predict` endpoint passes only the four zone counts to the model, so you would also need to update the prediction logic in `app.py` to include the new features.
+</Tip>

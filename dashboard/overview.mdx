@@ -1,0 +1,84 @@
+---
+title: "Traffic Reducer dashboard: a guided tour"
+sidebarTitle: "Overview"
+description: "A walkthrough of every UI section in the Traffic Reducer web dashboard — camera feed, intersection graphic, status cards, and control panels."
+---
+
+The Traffic Reducer dashboard is a single-page application served by Flask at `http://127.0.0.1:5000`. Every section updates in real time — either driven by the YOLOv8 detection pipeline in live mode or by manual range-slider input in simulation mode — with no page reload required.
+
+## UI sections
+
+<Accordion title="Source selection modal">
+On first load the server starts in `idle` mode and a modal dialog appears immediately, prompting you to choose a video source before any processing begins. The modal offers two options:
+
+- **Stream en vivo** — connects to the YouTube live traffic camera via `yt-dlp`.
+- **Video local** — loops the bundled drone-view MP4 file (`traffic_dron_view.mp4`).
+
+The "Video local" button (and its counterpart inside the camera feed card) is automatically disabled if the MP4 file is not present on disk. The server reports file availability through `GET /source_status`, and the frontend checks `has_local` in the response before rendering the button state.
+
+Once a source is selected the modal closes and stats polling begins automatically.
+</Accordion>
+
+<Accordion title="Navigation bar">
+The navigation bar sits at the top of every page view and contains two elements:
+
+- **TrafficReducer brand link** — scrolls back to the top of the page.
+- **Activar Control button** — clicking this button toggles live AI mode identically to the "Simulación en vivo" toggle in the hero section. When live mode is active the button label changes to **Desactivar Control** and gains the `.active` CSS class.
+</Accordion>
+
+<Accordion title="Camera feed card">
+The camera feed card streams MJPEG frames from `GET /video_feed` directly into an `<img>` element. The server pushes frames as a `multipart/x-mixed-replace` boundary stream, so the browser updates the image continuously without JavaScript polling.
+
+The feed renders zone polygon overlays and bounding boxes drawn by the YOLOv8 pipeline on each frame. Alongside the video a sidebar panel shows:
+
+| Sidebar field | Description |
+|---|---|
+| **Decisión IA** | The current phase name determined by `np.argmax` on the four direction counts |
+| **N / S / E / O counts** | Per-direction vehicle totals from `GET /stats`, refreshed every 1 500 ms |
+| **Peatones** | Pedestrian count detected in the current frame |
+| **Emergencia** | `SÍ` (highlighted in `#b64400`) when an emergency vehicle is detected, otherwise `NO` |
+
+The card header also contains **EN VIVO** and **VIDEO LOCAL** source-switcher buttons that call `POST /set_source` and update the badge text (`● EN VIVO` / `● VIDEO LOCAL` / `● INACTIVO`) without reloading the stream element.
+</Accordion>
+
+<Accordion title="Status cards">
+Three summary cards are displayed below the camera feed in a horizontal grid:
+
+- **Prioridad activa** — the direction name (NORTE, SUR, ESTE, or OESTE) with the highest vehicle count, or `EMERGENCIA` if an emergency vehicle is detected.
+- **Peatones detectados** — total pedestrian count from the last `/stats` response.
+- **Vehículo de emergencia** — mirrors the emergency field; displays `SÍ` or `NO`.
+
+All three cards are updated on every `/stats` poll at a 1 500 ms interval. The stats interval starts automatically after a source is selected and runs independently of the live-mode toggle.
+</Accordion>
+
+<Accordion title="Intersection visualization">
+The intersection graphic is an animated road diagram rendered entirely in HTML and CSS. It shows four road arms (Norte, Sur, Este, Oeste) converging at a central junction. Each arm contains:
+
+- A **cars density bar** (`#cars-north`, `#cars-south`, `#cars-east`, `#cars-west`) whose CSS `opacity` is set proportionally to the vehicle count — ranging from `0.05` (empty) to `0.65` (maximum load) via the formula `0.05 + (value / 100) * 0.6`.
+- A **stop line** marking the edge of the junction.
+
+At the center, four traffic lights (N, S, E, W) each hold a red bulb and a green bulb. When a prediction is received the winning direction's green bulb gains the `.active` class and its red bulb loses it; all other lights remain red. The active road arm also receives the `.active-road` class for a CSS highlight effect.
+</Accordion>
+
+<Accordion title="Manual controls">
+The Manual Control section contains four range sliders — Norte, Sur, Este, and Oeste — each spanning `0` to `100` vehicles with a default value of `10`. A numeric readout beneath each slider shows the current value in real time.
+
+When live mode is **off** (the default), adjusting any slider immediately fires a `POST /predict` request with all four current slider values. The response updates the intersection graphic and the priority status card. When live mode is **on**, sliders are disabled and their values reflect the counts reported by the YOLO camera pipeline.
+</Accordion>
+
+## Continue reading
+
+<CardGroup cols={2}>
+  <Card title="Video Sources" icon="video" href="/dashboard/video-sources">
+    Switch between YouTube live and local MP4, understand reconnection logic, and control playback speed.
+  </Card>
+  <Card title="Live Mode" icon="circle-dot" href="/dashboard/live-mode">
+    Enable YOLOv8-driven signal control and understand how the 2-second prediction loop works.
+  </Card>
+  <Card title="Manual Mode" icon="sliders" href="/dashboard/manual-mode">
+    Use the range sliders to test signal decisions with arbitrary vehicle counts.
+  </Card>
+  <Card title="API Endpoints" icon="code" href="/reference/api-endpoints">
+    Full reference for every Flask route — `/predict`, `/stats`, `/set_source`, and more.
+  </Card>
+</CardGroup>

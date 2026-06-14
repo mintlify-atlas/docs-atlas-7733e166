@@ -1,0 +1,146 @@
+---
+title: "Install Traffic Reducer and its dependencies"
+sidebarTitle: "Installation"
+description: "Step-by-step guide to installing Python, FFmpeg, YOLOv8 model weights, and all pip packages required to run Traffic Reducer."
+---
+
+Traffic Reducer requires Python, a small set of pip packages, and a few supporting assets — YOLO weight files, an optional FFmpeg binary, and a pre-trained sklearn model. This page covers every prerequisite and explains what each component does, so you have a complete picture before running the installation command.
+
+## Prerequisites
+
+Before installing, confirm that your system meets the following requirements:
+
+- **Python 3.10 or 3.11** — required for compatibility with `ultralytics`, `scikit-learn`, and the rest of the dependency stack. Python 3.12+ may work but is not tested. Verify with:
+
+  ```bash
+  python --version
+  ```
+
+- **pip** — the standard Python package manager, included with all Python 3 distributions. Verify with:
+
+  ```bash
+  pip --version
+  ```
+
+- **Internet connection (for YouTube mode)** — `yt-dlp` must resolve a live HLS URL from YouTube each time the YouTube source is activated. Local video mode works fully offline.
+
+## Python packages
+
+All required packages are listed in `requirements.txt` at the project root:
+
+```
+flask
+pandas
+numpy
+joblib
+scikit-learn
+opencv-python
+ultralytics
+yt-dlp
+```
+
+The table below explains what each package contributes to the system:
+
+| Package | Version note | Purpose |
+|---|---|---|
+| `flask` | Any current stable release | Web server, Jinja2 template rendering, and REST API routing for the dashboard |
+| `opencv-python` | Any current stable release | Frame capture from local video files and the FFmpeg pipe, zone polygon testing, bounding-box drawing, and JPEG encoding |
+| `ultralytics` | Any current stable release | YOLOv8 model loading and inference; also installs `imageio-ffmpeg` as a dependency |
+| `yt-dlp` | Any current stable release | Extracts a direct HLS stream URL from a YouTube live link so FFmpeg can pipe raw video frames |
+| `pandas` | Any current stable release | Data handling utilities used across the processing pipeline |
+| `numpy` | Any current stable release | Numerical operations — polygon centroid tests, `argmax` phase selection, HSV colour ratio calculations for emergency detection |
+| `joblib` | Any current stable release | Alternative deserialiser for the pre-trained sklearn `.pkl` model file; used as a fallback when `pickle.load` fails |
+| `scikit-learn` | Any current stable release | Provides the runtime environment for the pre-trained signal-phase classification model |
+
+Install everything with a single command run from the project root:
+
+```bash
+pip install -r requirements.txt
+```
+
+<Note>
+  On Windows, use `py` instead of `python` if the `python` command is not recognised. On macOS and Linux, use `python3` and `pip3` to avoid accidentally targeting a system Python 2 installation.
+</Note>
+
+## YOLOv8 model weights
+
+Traffic Reducer ships with three YOLO weight files in the repository root:
+
+| File | Size | Notes |
+|---|---|---|
+| `yolov8m.pt` | Medium | Default — best accuracy for multi-vehicle intersection scenes |
+| `yolov8s.pt` | Small | Faster inference; used automatically if `yolov8m.pt` is absent |
+| `yolov8n.pt` | Nano | Lightest option; available for low-resource environments |
+
+The application selects the model at startup using the following priority order, taken directly from `traffic_app/app.py`:
+
+```python
+_yolov8m_local = os.path.join(PROJECT_ROOT, "yolov8m.pt")
+_yolov8s_local = os.path.join(PROJECT_ROOT, "yolov8s.pt")
+if os.path.exists(_yolov8m_local):
+    YOLO_MODEL_PATH = _yolov8m_local
+elif os.path.exists(_yolov8s_local):
+    YOLO_MODEL_PATH = _yolov8s_local
+else:
+    YOLO_MODEL_PATH = "yolov8m.pt"
+```
+
+If neither local file exists, Ultralytics will attempt to download `yolov8m.pt` from its model registry on first run. Keep at least one `.pt` file in the project root to avoid this network request at startup.
+
+## FFmpeg
+
+Traffic Reducer uses FFmpeg to decode the YouTube HLS stream into raw BGR frames that OpenCV can process. You do **not** need to install FFmpeg manually. The `imageio-ffmpeg` package — installed automatically as a dependency of `ultralytics` — bundles a platform-appropriate FFmpeg binary and exposes it at runtime:
+
+```python
+# From traffic_app/video_processor.py
+import imageio_ffmpeg
+FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
+```
+
+The resolved binary path is passed directly to `subprocess.Popen` when opening a YouTube stream. No `PATH` configuration or system-level FFmpeg installation is required.
+
+## Pre-trained sklearn model
+
+The repository includes a pre-trained scikit-learn model for signal-phase classification:
+
+```
+traffic_reducer_dataset/modelo_entrenado/modelo_semaforo_ia.pkl
+```
+
+This `.pkl` file is loaded at server startup by `traffic_app/app.py` using `pickle.load` with a `joblib.load` fallback. It is used by the `POST /predict` endpoint to classify the appropriate signal phase from vehicle count inputs.
+
+<Warning>
+  The `MODEL_PATH` constant in `traffic_app/app.py` is currently hardcoded to the original developer's local machine path:
+
+  ```python
+  MODEL_PATH = r"C:\Users\Xande\important\The Predictors\Haklaton\The Predictors-traffic_reducer\traffic_reducer_dataset\modelo_entrenado\modelo_semaforo_ia.pkl"
+  ```
+
+  This path does not exist on any other machine. Before running the server in production, open `traffic_app/app.py` and update `MODEL_PATH` to the correct absolute path of `modelo_semaforo_ia.pkl` on your system. For example:
+
+  ```python
+  MODEL_PATH = r"C:\Projects\traffic_reducer\traffic_reducer_dataset\modelo_entrenado\modelo_semaforo_ia.pkl"
+  ```
+
+  If the file is not found, the application starts normally but logs a warning and disables the `/predict` endpoint — all other features, including live YOLOv8 detection and the dashboard, continue to work.
+</Warning>
+
+## Verifying the installation
+
+Once `pip install -r requirements.txt` completes, run the server to confirm everything is in order:
+
+```bash
+py traffic_app/app.py
+```
+
+A successful startup prints the following lines before the Flask development server banner:
+
+```
+[App] Modelo YOLO: yolov8m.pt
+[App] Video local: .../traffic_dron_view.mp4 (OK)
+[App] Modo por defecto: idle
+Iniciando Traffic Reducer Server...
+http://127.0.0.1:5000
+```
+
+If you see these lines, all packages loaded correctly, the YOLO weights were found, and the Flask server is accepting connections. Proceed to the [Quickstart](/quickstart) to connect a video source and activate AI control.

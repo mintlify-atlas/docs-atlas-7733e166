@@ -1,0 +1,114 @@
+---
+title: "Live AI mode: real-time signal control from video"
+sidebarTitle: "Live Mode"
+description: "Enable Traffic Reducer's live AI mode to have YOLOv8 detect vehicles from the active video source and automatically update traffic signal decisions every 2 seconds."
+---
+
+Live mode connects the YOLOv8 detection pipeline directly to the signal decision logic, updating the green-light assignment every 2 seconds based on real vehicle counts read from the active video source. No manual slider input is needed — the camera does the counting.
+
+## Activating live mode
+
+<Steps>
+  <Step title="Select a video source">
+    Ensure a video source is active. If the dashboard shows `● INACTIVO`, click **EN VIVO** or **VIDEO LOCAL** in the camera feed card header, or make a selection in the source modal. The stats polling interval will start automatically once a source is chosen.
+  </Step>
+  <Step title="Enable the toggle or click the navbar button">
+    Toggle the **Simulación en vivo** switch in the hero section to the ON position, or click the **Activar Control** button in the navigation bar. Both controls are synchronized — either one flips the same internal `cvModeActive` flag.
+  </Step>
+  <Step title="Confirm the mode change">
+    The four manual range sliders are disabled immediately. The navbar button label changes to **Desactivar Control**. The intersection graphic begins updating from camera-reported counts instead of slider values.
+  </Step>
+</Steps>
+
+## What happens during live mode
+
+Once live mode is active, the frontend runs two independent polling loops:
+
+### Prediction loop — every 2 000 ms
+
+The frontend calls `POST /predict` with `{ "live_mode": true }` every 2 seconds:
+
+```javascript
+// script.js — startLiveLoop()
+liveInterval = setInterval(updatePrediction, 2000);
+```
+
+The server reads the latest per-zone vehicle counts from the YOLO pipeline:
+
+```python
+# app.py — /predict route
+counts = camera.get_counts()
+norte = float(counts['norte'])
+sur   = float(counts['sur'])
+este  = float(counts['este'])
+oeste = float(counts['oeste'])
+
+result = int(np.argmax([norte, sur, este, oeste]))
+camera.set_phase(result)   # updates internal phase state
+```
+
+The winning direction index (`0` = NORTE, `1` = SUR, `2` = ESTE, `3` = OESTE) is returned in the `prediction` field. The dashboard updates the intersection graphic: the winning direction's green bulb activates, all others revert to red, and the **Prioridad activa** card shows the direction name.
+
+A typical live-mode prediction response:
+
+```json
+{
+  "prediction": 2,
+  "traffic_data": {
+    "norte": 3.0,
+    "sur": 7.0,
+    "este": 14.0,
+    "oeste": 5.0
+  }
+}
+```
+
+### Stats loop — every 1 500 ms
+
+An independent interval polls `GET /stats` every 1 500 ms throughout the session (not just in live mode). It updates the sidebar counts (N, S, E, O), pedestrian count, emergency status, and the AI Decision phase label:
+
+```javascript
+// script.js — fetchStats()
+statsInterval = setInterval(fetchStats, 1500);
+```
+
+A sample `/stats` response:
+
+```json
+{
+  "norte": 3,
+  "sur": 7,
+  "este": 14,
+  "oeste": 5,
+  "pedestrians": 2,
+  "emergency": false,
+  "phase": "ESTE",
+  "priority": "ESTE",
+  "priority_idx": 2,
+  "mode": "youtube"
+}
+```
+
+## Emergency override
+
+If the camera detects an emergency vehicle, `camera.get_counts()` sets `emergency: true`. When this reaches the dashboard through either the `/predict` or `/stats` response:
+
+- The **Prioridad activa** card displays **EMERGENCIA** in `#b64400` (amber-red).
+- The sidebar **Emergencia** field changes from `NO` to `SÍ` in the same colour.
+- The manual sliders remain locked (they were already disabled in live mode).
+
+The emergency display is cleared automatically on the next poll once the emergency vehicle is no longer detected.
+
+## Deactivating live mode
+
+Toggle **Simulación en vivo** back to OFF, or click **Desactivar Control** in the navbar. The frontend:
+
+1. Clears the 2 000 ms prediction interval (`clearInterval(liveInterval)`).
+2. Re-enables all four range sliders.
+3. Fires one immediate `POST /predict` call with the current slider values so the intersection graphic reflects manual state instantly.
+
+The stats polling loop at `/stats` continues running independently — it is not tied to the live-mode toggle.
+
+<Note>
+Live mode works fully with the local video source — no internet connection is required. This makes it useful for offline development and integration testing. Set `LOCAL_VIDEO_SPEED` to `1.0` in `app.py` for real-time simulation, or a higher value such as `2.0` for accelerated scenario testing.
+</Note>
