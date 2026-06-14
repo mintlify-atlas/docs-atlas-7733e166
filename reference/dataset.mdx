@@ -1,16 +1,16 @@
 ---
-title: "Traffic Reducer training dataset and model"
+title: "Traffic Reducer synthetic training dataset and model"
 sidebarTitle: "Dataset & Model"
 description: "Details of the synthetic training dataset used to train modelo_semaforo_ia.pkl: schema, generation method, label distribution, and how to retrain."
 ---
 
-The scikit-learn phase-classifier model (`modelo_semaforo_ia.pkl`) was trained on a fully synthetic dataset that maps four-direction vehicle counts to the expected winning signal phase. The model is loaded at server startup by `app.py` and called on every `/predict` request.
+The scikit-learn phase-classifier model (`modelo_semaforo_ia.pkl`) was trained on a fully synthetic dataset that maps four-direction vehicle counts to the expected winning signal phase. The model is loaded at server startup by `app.py`; its presence is required for the `/predict` endpoint to respond — the endpoint returns `500` if the model failed to load.
 
 ---
 
 ## Dataset file
 
-```
+```text
 traffic_reducer_dataset/modelo_entrenado/dataset_sintetico_entrenamiento.csv
 ```
 
@@ -52,7 +52,7 @@ Norte,Sur,Este,Oeste,GANADOR_ESPERADO
 
 `GANADOR_ESPERADO` is always the index of the maximum count across the four directions:
 
-```
+```text
 GANADOR_ESPERADO = argmax([Norte, Sur, Este, Oeste])
 ```
 

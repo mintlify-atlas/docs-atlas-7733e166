@@ -1,5 +1,5 @@
 ---
-title: "REST API endpoints reference for Traffic Reducer"
+title: "Traffic Reducer REST API endpoints reference guide"
 sidebarTitle: "API Endpoints"
 description: "Complete reference for all eight Flask REST endpoints: vehicle counts, signal prediction, video source control, and simulation data."
 ---
@@ -109,10 +109,10 @@ curl http://127.0.0.1:5000/stats
 
 ## POST /predict
 
-Runs the signal phase prediction algorithm and returns the recommended winning phase. In manual mode, the counts you supply in the request body are used directly. In live mode, the counts are read from the camera's latest YOLOv8 inference result, and the winning phase is automatically applied to the camera display via `set_phase()`.
+Determines the recommended winning signal phase using `np.argmax()` on the four vehicle counts and returns the result. In manual mode, the counts you supply in the request body are used directly. In live mode, the counts are read from the camera's latest YOLOv8 inference result, and the winning phase is automatically applied to the camera display via `set_phase()`.
 
 <Note>
-  If the sklearn model (`modelo_semaforo_ia.pkl`) failed to load at startup, this endpoint returns `500` with `{"error": "Modelo no disponible"}`. Verify `MODEL_PATH` in `app.py` points to the correct file.
+  The endpoint requires `modelo_semaforo_ia.pkl` to be successfully loaded at startup — it returns `500` with `{"error": "Modelo no disponible"}` if the model is absent, even though the argmax computation itself does not call `model.predict()`. Verify `MODEL_PATH` in `app.py` points to the correct file to pass this guard.
 </Note>
 
 **Request body (JSON):**

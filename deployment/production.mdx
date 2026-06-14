@@ -1,7 +1,7 @@
 ---
-title: "Deploy Traffic Reducer for production use"
+title: "Deploying Traffic Reducer to a production server environment"
 sidebarTitle: "Production"
-description: "Guidance for running Traffic Reducer reliably in production: disabling Flask debug mode, GPU acceleration, persistent service setup, and network access configuration."
+description: "Run Traffic Reducer reliably in production: disable Flask debug mode, add GPU acceleration, configure a WSGI server, and set up a persistent service."
 ---
 
 The default `app.run(debug=True)` configuration in `app.py` is intended for local development only. It enables the interactive debugger, exposes the Werkzeug reloader (disabled here via `use_reloader=False`), and binds only to `127.0.0.1`, making the server unreachable from other machines. This page covers the changes needed to run Traffic Reducer reliably and securely in a production environment.

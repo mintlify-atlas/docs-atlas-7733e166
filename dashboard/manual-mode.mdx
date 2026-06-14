@@ -1,5 +1,5 @@
 ---
-title: "Manual simulation mode: test signal decisions"
+title: "Manual simulation mode: test traffic signal decisions"
 sidebarTitle: "Manual Mode"
 description: "Use the dashboard's range sliders to manually set vehicle counts per direction and immediately see which lane the AI model would prioritize."
 ---
@@ -69,7 +69,7 @@ On receiving the response the dashboard:
 
 ## Randomized scenarios with `/simulate`
 
-To quickly generate a realistic but random traffic scenario, use the **Activar Control** button while live mode is **off**, or call the `/simulate` endpoint directly:
+To quickly generate a realistic but random traffic scenario, call the `/simulate` endpoint directly:
 
 ```bash
 curl http://127.0.0.1:5000/simulate

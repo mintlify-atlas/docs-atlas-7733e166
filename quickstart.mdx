@@ -1,7 +1,7 @@
 ---
-title: "Get started with Traffic Reducer in 5 minutes"
+title: "Traffic Reducer quickstart: run the server in 5 minutes"
 sidebarTitle: "Quickstart"
-description: "Install dependencies, launch the Flask server, and see AI-driven traffic signal decisions in your browser in under five minutes."
+description: "Install dependencies, start the Flask server, and watch AI-driven traffic signal decisions update live in your browser in under five minutes."
 ---
 
 This guide walks you from a freshly cloned repository to a live, AI-controlled traffic signal dashboard running in your browser. By the end you will have the Flask server running, a video source connected, and YOLOv8 actively counting vehicles and selecting green-light phases in real time.
@@ -97,7 +97,7 @@ This guide walks you from a freshly cloned repository to a live, AI-controlled t
        [TrafficCamera] Stream YouTube abierto (ffmpeg pipe) — esperando primer frame...
        ```
 
-       When frames start arriving you will see **"Stream Connected"** in the console output. This confirms that YOLOv8 is actively processing frames and zone counts are being updated.
+       When frames start arriving, the console will print `[TrafficCamera] Stream YouTube abierto (ffmpeg pipe) — esperando primer frame...` followed by frame processing logs. This confirms that YOLOv8 is actively processing frames and zone counts are being updated.
 
     3. Click **"Activar Control"** (or the **LIVE SIMULATION MODE** toggle) to enable AI decision mode. The system now calls `POST /predict` with `live_mode: true` on each cycle, applies `np.argmax` across the four zone counts, and sets the winning direction as the active green-light phase. The dashboard signal display updates in real time to reflect the AI decision.
   </Step>

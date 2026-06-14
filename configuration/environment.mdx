@@ -1,5 +1,5 @@
 ---
-title: "Environment variables and runtime configuration"
+title: "Environment variables and runtime configuration guide"
 sidebarTitle: "Environment"
 description: "All configurable constants in Traffic Reducer's app.py and video_processor.py, including model paths, video sources, FFmpeg options, and frame settings."
 ---
@@ -13,15 +13,17 @@ These constants control the sklearn prediction model, video sources, YOLO weight
 | Constant | Default | Description |
 |---|---|---|
 | `MODEL_PATH` | Hardcoded developer Windows path | Absolute path to `modelo_semaforo_ia.pkl` — the sklearn signal-phase model |
-| `LOCAL_VIDEO_PATH` | `traffic_app/static/traffic_dron_view.mp4` | Path to the local fallback video file |
+| `LOCAL_VIDEO_PATH` | Computed from `__file__` | `os.path.join(os.path.dirname(__file__), "static", "traffic_dron_view.mp4")` — path to the local fallback video |
 | `YOUTUBE_URL` | `https://www.youtube.com/live/1H0iTzv2jiQ` | YouTube live stream URL used in `youtube` mode |
+| `PROJECT_ROOT` | Computed from `__file__` | Two directories above `app.py`; used to locate `.pt` weight files |
 | `YOLO_MODEL_PATH` | Auto-selected from project root | Path to the YOLOv8 `.pt` weights file; resolved at startup |
+| `LOCAL_VIDEO_EXISTS` | Computed at startup | `True` if `LOCAL_VIDEO_PATH` exists on disk; controls whether `local` mode is available |
 | `DEFAULT_MODE` | `'idle'` | Startup mode: `'idle'`, `'youtube'`, or `'local'` |
 | `LOCAL_VIDEO_SPEED` | `0.5` | Playback speed multiplier for local video mode |
 
 ## `video_processor.py` constants
 
-These constants define the output dimensions and frame rate used when decoding the YouTube live stream through FFmpeg.
+These constants define the output dimensions and frame rate used when decoding the YouTube live stream through FFmpeg, as well as helper values resolved once at import time.
 
 | Constant | Value | Description |
 |---|---|---|
@@ -29,6 +31,10 @@ These constants define the output dimensions and frame rate used when decoding t
 | `YT_HEIGHT` | `480` | Output height of decoded YouTube frames (pixels) |
 | `YT_TARGET_FPS` | `25` | FFmpeg target frame rate for YouTube mode |
 | `YT_FRAME_BYTES` | `854 × 480 × 3` | Expected raw frame size in bytes (BGR24) |
+| `PHASE_LABELS` | `{0: "NORTE", 1: "SUR", 2: "ESTE", 3: "OESTE"}` | Maps integer phase IDs to direction strings |
+| `FFMPEG_BIN` | Resolved via `imageio_ffmpeg` | Absolute path to the FFmpeg executable bundled by `imageio-ffmpeg` |
+| `NODE_PATH` | Detected via `shutil.which` | Path to a Node.js executable if found; `None` otherwise |
+| `JS_RUNTIMES` | `{'node': {'path': NODE_PATH}}` or `{}` | Runtime hint dict passed to `yt-dlp` when Node is available |
 
 ## OpenCV FFmpeg environment variables
 
@@ -48,7 +54,7 @@ os.environ['OPENCV_FFMPEG_READ_TIMEOUT'] = '60000'
 os.environ['OPENCV_LOG_LEVEL'] = 'OFF'
 ```
 
-These values are applied globally as soon as the module is imported and affect all OpenCV video captures opened during the session. The timeout values are expressed in milliseconds (`60000` = 60 seconds).
+These values are applied globally as soon as the module is imported and affect all OpenCV video captures opened during the session. The timeout values are expressed in milliseconds (`60000` = 60 seconds). `OPENCV_LOG_LEVEL = 'OFF'` suppresses OpenCV's verbose FFmpeg log output from the console.
 
 ## Common configuration changes
 
@@ -78,5 +84,11 @@ LOCAL_VIDEO_SPEED = 1.0  # real-time playback
 ```
 
 <Warning>
-  `MODEL_PATH` in `app.py` is hardcoded to a developer's Windows filesystem path (`C:\Users\Xande\...`). This path will not exist on any other machine. Update it to the correct absolute path before running Traffic Reducer, or the sklearn model will fail to load. The application handles this gracefully — it falls back to argmax-only mode using live vehicle counts — but the `/predict` endpoint will return an error if the model is unavailable and `live_mode` is not used.
+  `MODEL_PATH` in `app.py` is hardcoded to a developer's Windows filesystem path:
+
+  ```
+  C:\Users\Xande\important\The Predictors\Haklaton\The Predictors-traffic_reducer\traffic_reducer_dataset\modelo_entrenado\modelo_semaforo_ia.pkl
+  ```
+
+  This path will not exist on any other machine. Update it to the correct absolute path before running Traffic Reducer, or the sklearn model will fail to load. The application handles this gracefully — it falls back to argmax-only mode using live vehicle counts — but the `/predict` endpoint will return a 500 error if the model is unavailable and `live_mode` is not used.
 </Warning>

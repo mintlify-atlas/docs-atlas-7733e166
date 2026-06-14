@@ -1,5 +1,5 @@
 ---
-title: "Troubleshooting common Traffic Reducer issues"
+title: "Troubleshooting common Traffic Reducer setup issues"
 sidebarTitle: "Troubleshooting"
 description: "Solutions for the most common errors when running Traffic Reducer: stream failures, model load errors, video capture problems, and performance issues."
 ---
@@ -12,7 +12,7 @@ Most issues fall into four categories — stream connectivity, model loading, vi
 
 **Symptom:** Lines like the following appear repeatedly in the terminal:
 
-```
+```text
 [TLS] handshake failed
 socket: connection reset by peer
 ```
@@ -49,7 +49,7 @@ socket: connection reset by peer
 
 **Symptom:** The terminal shows:
 
-```
+```text
 [App] No se pudo cargar el modelo: [Errno 2] No such file or directory: 'C:\\Users\\Xande\\important\\...'
 ```
 
@@ -93,7 +93,7 @@ Restart the server after saving. If the model still fails to load, verify it was
 
 **Fix:** Place any drone-view or intersection traffic MP4 at that path:
 
-```
+```text
 traffic_app/static/traffic_dron_view.mp4
 ```
 
@@ -143,7 +143,7 @@ Restart the server after making the change — `LOCAL_VIDEO_EXISTS` is evaluated
 
 **Symptom:**
 
-```
+```text
 'py' is not recognized as an internal or external command, operable program or batch file.
 ```
 
@@ -186,7 +186,7 @@ This means no vehicles are being detected in any zone.
 
 **Symptom:** The server fails to start with:
 
-```
+```text
 OSError: [Errno 48] Address already in use
 ```
 

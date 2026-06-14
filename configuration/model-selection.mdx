@@ -1,10 +1,10 @@
 ---
-title: "Selecting a YOLOv8 model variant for detection"
+title: "Selecting a YOLOv8 model variant for traffic detection"
 sidebarTitle: "Model Selection"
-description: "Choose between YOLOv8 nano, small, and medium weight files to balance detection accuracy and inference speed for your deployment hardware."
+description: "Choose between YOLOv8 small and medium weight files to balance detection accuracy and inference speed for your deployment hardware."
 ---
 
-Traffic Reducer ships with support for three YOLOv8 weight files and automatically selects the best available one at startup — no manual configuration required for the common case. The selection logic in `app.py` checks for weight files in the project root directory and falls back gracefully if none are found locally.
+Traffic Reducer ships with support for multiple YOLOv8 weight files and automatically selects the best available one at startup — no manual configuration required for the common case. The selection logic in `app.py` checks for weight files in the project root directory and falls back gracefully if none are found locally.
 
 ## Auto-selection logic
 
@@ -22,13 +22,12 @@ else:
     YOLO_MODEL_PATH = "yolov8m.pt"  # auto-download fallback
 ```
 
-If neither `yolov8m.pt` nor `yolov8s.pt` is found locally, Ultralytics will attempt to download `yolov8m.pt` from its model hub the first time the application starts. Ensure the machine has internet access on first run if no local weights are present.
+The logic checks for `yolov8m.pt` first, then `yolov8s.pt`. If neither is found locally, Ultralytics will attempt to download `yolov8m.pt` from its model hub the first time the application starts. Ensure the machine has internet access on first run if no local weights are present.
 
 ## Model comparison
 
 | Weight file | Parameters | Best for |
 |---|---|---|
-| `yolov8n.pt` | ~3M | Low-power hardware, fast CPU inference |
 | `yolov8s.pt` | ~11M | Balanced speed and accuracy |
 | `yolov8m.pt` | ~26M | Best accuracy; GPU recommended |
 
@@ -41,21 +40,25 @@ To pin the system to a particular weight file, use one of these approaches:
 
 ```python
 # In app.py — bypass auto-selection entirely
-YOLO_MODEL_PATH = "/opt/traffic_reducer/yolov8n.pt"
+YOLO_MODEL_PATH = "/opt/traffic_reducer/yolov8s.pt"
 ```
 
 ## Inference parameters
 
-`TrafficCamera` exposes four inference parameters that control how YOLOv8 processes each frame inside `_run_yolo()`. These are set once at construction time and apply to every frame throughout the session.
+`TrafficCamera` exposes four constructor parameters that control how YOLOv8 filters detections. These are set once at construction time and apply to every frame throughout the session.
 
 | Parameter | Default | Description |
 |---|---|---|
 | `conf` | `0.25` | Minimum confidence score to accept a detection |
 | `iou` | `0.5` | IoU threshold for non-maximum suppression |
 | `max_det` | `300` | Maximum number of detections per frame |
-| `imgsz` | `640` | Inference input resolution (pixels) |
+| `local_speed` | `1.0` | Playback speed multiplier for local video mode |
 
-To override any of these values, pass them as keyword arguments when `TrafficCamera` is instantiated in `app.py`:
+<Note>
+  The inference image size is hardcoded to `imgsz=640` inside `_run_yolo()` and is not a constructor parameter. It cannot be changed without editing `video_processor.py` directly. Non-maximum suppression is run class-agnostically (`agnostic_nms=True`) so that vehicles near zone boundaries are not double-counted across overlapping detections.
+</Note>
+
+To override the default detection thresholds, pass them as keyword arguments when `TrafficCamera` is instantiated in `app.py`:
 
 ```python
 camera = TrafficCamera(
@@ -66,7 +69,3 @@ camera = TrafficCamera(
     max_det=200,
 )
 ```
-
-<Tip>
-  On machines without a GPU, switch to `yolov8n.pt` and reduce `imgsz` to `416` to keep per-frame inference well under 100 ms. The smaller input resolution has a modest accuracy cost but is often negligible for overhead drone-view footage.
-</Tip>

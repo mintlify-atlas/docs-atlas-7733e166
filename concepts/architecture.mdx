@@ -1,5 +1,5 @@
 ---
-title: "Traffic Reducer system architecture overview"
+title: "Traffic Reducer: full system architecture and data flow"
 sidebarTitle: "Architecture"
 description: "How Traffic Reducer's components — TrafficCamera, YOLOv8, Flask API, and web dashboard — fit together to form an adaptive signal control pipeline."
 ---
@@ -10,7 +10,7 @@ Traffic Reducer is built from two cooperating Python modules: `video_processor.p
 
 Every processed frame travels through the following stages before the dashboard updates:
 
-```
+```text
 Video source (YouTube live / local file)
         │
         ▼
@@ -90,7 +90,7 @@ The browser dashboard never holds server-side state. It polls two endpoints on f
 
 Traffic Reducer runs three concurrent execution contexts at all times:
 
-```
+```text
 Main thread  ──────────────────────  Flask (Werkzeug WSGI server)
                                        handles all HTTP requests
 

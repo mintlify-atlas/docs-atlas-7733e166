@@ -1,7 +1,7 @@
 ---
 title: "Signal phase decision: how the green light is chosen"
 sidebarTitle: "Signal Decision"
-description: "Traffic Reducer uses a majority-rule algorithm — the lane with the most detected vehicles wins the green light — with sklearn model support for phase classification."
+description: "Traffic Reducer uses an argmax majority-rule algorithm to pick the green-light phase from live vehicle counts, backed by a pre-trained sklearn classifier."
 ---
 
 Traffic Reducer determines which direction receives the green light by applying a simple majority-rule (argmax) algorithm to the four live vehicle counts. The approach requires no look-ahead or timing history: whichever approach lane currently holds the largest number of detected vehicles is granted the green phase immediately. This decision executes on every `/predict` call — up to once every 2 000 ms in live mode — so the signal adapts continuously as the intersection fills and empties.

@@ -1,7 +1,7 @@
 ---
-title: "Install Traffic Reducer and its dependencies"
+title: "Traffic Reducer installation: packages and model weights"
 sidebarTitle: "Installation"
-description: "Step-by-step guide to installing Python, FFmpeg, YOLOv8 model weights, and all pip packages required to run Traffic Reducer."
+description: "Install all eight pip packages, configure YOLOv8 model weights, and understand the FFmpeg and sklearn model requirements for Traffic Reducer."
 ---
 
 Traffic Reducer requires Python, a small set of pip packages, and a few supporting assets — YOLO weight files, an optional FFmpeg binary, and a pre-trained sklearn model. This page covers every prerequisite and explains what each component does, so you have a complete picture before running the installation command.
@@ -70,7 +70,6 @@ Traffic Reducer ships with three YOLO weight files in the repository root:
 |---|---|---|
 | `yolov8m.pt` | Medium | Default — best accuracy for multi-vehicle intersection scenes |
 | `yolov8s.pt` | Small | Faster inference; used automatically if `yolov8m.pt` is absent |
-| `yolov8n.pt` | Nano | Lightest option; available for low-resource environments |
 
 The application selects the model at startup using the following priority order, taken directly from `traffic_app/app.py`:
 

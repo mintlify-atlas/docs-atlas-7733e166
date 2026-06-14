@@ -1,5 +1,5 @@
 ---
-title: "Switching video sources in Traffic Reducer"
+title: "Traffic Reducer: switching video sources at runtime"
 sidebarTitle: "Video Sources"
 description: "How to switch between the YouTube live traffic stream and a local drone-view MP4 file, and how Traffic Reducer handles source failures and reconnection."
 ---
@@ -25,7 +25,7 @@ Once a valid stream URL is resolved, raw BGR24 video frames are piped through FF
 **Failure and reconnection behaviour:**
 
 - If the stream drops or `yt-dlp` fails to resolve the URL, the server enters a **60-second cooldown** before retrying automatically.
-- After **3 consecutive failures**, the dashboard surface-level badge switches to `● INACTIVO` and the UI suggests switching to local video.
+- After **3 consecutive failures** (when a local video file is available), the placeholder frame message changes to **"YouTube no responde — cambia a Video local"**, prompting you to switch sources.
 - TLS handshake errors and socket reset messages that appear in the terminal during this period are handled by the reconnection logic and are safe to ignore.
 
 <Warning>
@@ -66,6 +66,8 @@ The "VIDEO LOCAL" button in the UI and the `modal-pick-local` option in the sour
     The MJPEG stream at `/video_feed` restarts with the new source. There is no page reload — the `<img>` element continues receiving frames from the same URL.
   </Step>
 </Steps>
+
+When a source switch occurs, `set_mode()` on the server closes any open capture device or FFmpeg subprocess, resets `last_yolo_data` and `yolo_cache` to clear stale detection state, and replaces the current frame with a transition placeholder (e.g., "Conectando al stream en vivo…") until the new source produces its first decoded frame.
 
 ## Switching sources via the API
 

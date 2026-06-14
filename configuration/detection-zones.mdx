@@ -1,7 +1,7 @@
 ---
-title: "Configuring intersection detection zones"
+title: "Configuring traffic intersection detection zones in OpenCV"
 sidebarTitle: "Detection Zones"
-description: "How Traffic Reducer maps camera pixels to compass-direction zones using normalized polygon coordinates, and how to adjust zones for different camera angles."
+description: "How Traffic Reducer maps camera pixels to directional zones using normalized polygon coordinates, and how to adjust zones for different camera angles."
 ---
 
 Detection zones are the quadrilateral regions in the camera frame that correspond to each directional lane at the intersection. Every vehicle detected by YOLOv8 is assigned to one of four zones — Norte, Sur, Este, or Oeste — based on where its bounding-box centroid falls. Vehicles whose centroids do not land inside any zone are labelled `other` and excluded from the traffic counts used for signal-phase decisions.
